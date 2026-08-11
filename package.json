@@ -1,0 +1,25 @@
+{
+  "name": "bambu3mf-studio",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "拓竹 3MF 项目文件查看与编辑器",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "sample": "node tools/make-sample.mjs",
+    "test": "node tools/make-sample.mjs && node tools/test-roundtrip.mjs",
+    "electron": "node electron/launch.cjs .",
+    "electron:build": "vite build && node electron/launch.cjs ."
+  },
+  "dependencies": {
+    "fflate": "^0.8.2",
+    "three": "^0.170.0"
+  },
+  "devDependencies": {
+    "vite": "^5.4.11",
+    "electron": "^31.0.0"
+  }
+}

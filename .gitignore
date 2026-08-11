@@ -1,0 +1,31 @@
+# 依赖
+node_modules/
+
+# 构建产物（按需重新 build）
+dist/
+
+# 日志与调试产物
+*.log
+.playwright-cli/
+.workbuddy/
+electron-run.log
+vite.log
+pw.out
+debug.log
+min.log
+
+# 临时截图 / 验证产物
+*.png
+after-*.yaml
+empty.yaml
+imported.yaml
+color.yaml
+combine.yaml
+scale*.yaml
+sel-cube.yaml
+viewport.png
+ui-*.png
+
+# 系统文件
+Thumbs.db
+.DS_Store

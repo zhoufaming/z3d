@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bambu 3MF Studio</title>
+</head>
+<body>
+  <!-- SVG 图标精灵 -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <g id="ic" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <g id="ic-move"><path d="M12 3v18M3 12h18"/><path d="M12 3l-2.4 2.6M12 3l2.4 2.6M12 21l-2.4-2.6M12 21l2.4-2.6M3 12l2.6-2.4M3 12l2.6 2.4M21 12l-2.6-2.4M21 12l-2.6 2.4"/></g>
+        <g id="ic-rotate"><path d="M20 11a8 8 0 1 0-2.3 5.6"/><path d="M20 5v6h-6"/></g>
+        <g id="ic-scale"><path d="M4 9l-1-5 5 1M20 15l1 5-5-1M4 15l-1 5 5-1M20 9l1-5-5 1"/></g>
+        <g id="ic-drop"><path d="M12 4v11"/><path d="M12 15l-3.2-3.2M12 15l3.2-3.2"/><path d="M5 20h14"/></g>
+        <g id="ic-center"><circle cx="12" cy="12" r="3.2"/><path d="M12 3v3.2M12 17.8V21M3 12h3.2M17.8 12H21"/></g>
+        <g id="ic-duplicate"><rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M4.5 15.5h-1A1.5 1.5 0 0 1 2 14V4a1.5 1.5 0 0 1 1.5-1.5H14a1.5 1.5 0 0 1 1.5 1.5v1"/></g>
+        <g id="ic-arrange"><rect x="3.5" y="3.5" width="6" height="6" rx="1.3"/><rect x="14.5" y="3.5" width="6" height="6" rx="1.3"/><rect x="3.5" y="14.5" width="6" height="6" rx="1.3"/><rect x="14.5" y="14.5" width="6" height="6" rx="1.3"/></g>
+        <g id="ic-delete"><path d="M4 7h16"/><path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/><path d="M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13"/><path d="M10 11v6M14 11v6"/></g>
+        <g id="ic-import"><path d="M12 15V4"/><path d="M8 9l4 5 4-5"/><path d="M4 19h16"/></g>
+        <g id="ic-add"><path d="M12 5v14M5 12h14"/></g>
+        <g id="ic-export"><path d="M12 4v11"/><path d="M8 9l4-5 4 5"/><path d="M4 19h16"/></g>
+        <g id="ic-undo"><path d="M9 7L4 12l5 5"/><path d="M4 12h11a5 5 0 0 1 0 10h-3"/></g>
+        <g id="ic-redo"><path d="M15 7l5 5-5 5"/><path d="M20 12H9a5 5 0 0 0 0 10h3"/></g>
+      </g>
+    </defs>
+  </svg>
+
+  <div id="app">
+    <header id="topbar">
+      <div class="brand">
+        <span class="logo"></span>
+        <span class="title">Bambu 3MF Studio</span>
+      </div>
+      <nav class="top-tabs">
+        <button class="tab active">编辑</button>
+      </nav>
+      <div class="top-actions">
+        <select id="plate-select" class="select" title="打印机机型"></select>
+        <button id="btn-import" class="btn primary">
+          <svg class="ic"><use href="#ic-import"/></svg>导入 3MF
+        </button>
+        <button id="btn-add" class="btn">
+          <svg class="ic"><use href="#ic-add"/></svg>追加合并
+        </button>
+        <span class="sep"></span>
+        <button id="btn-undo" class="btn icon" title="撤销 (Ctrl+Z)" disabled>
+          <svg class="ic"><use href="#ic-undo"/></svg>
+        </button>
+        <button id="btn-redo" class="btn icon" title="重做 (Ctrl+Shift+Z)" disabled>
+          <svg class="ic"><use href="#ic-redo"/></svg>
+        </button>
+        <span class="sep"></span>
+        <button id="btn-export" class="btn primary">
+          <svg class="ic"><use href="#ic-export"/></svg>导出 3MF
+        </button>
+      </div>
+    </header>
+
+    <main id="workspace">
+      <aside id="left-panel">
+        <div class="panel grow">
+          <div class="panel-head">
+            <span>对象</span>
+            <span class="count" id="obj-count">0</span>
+          </div>
+          <div id="object-tree" class="scroll"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><span>材料槽位</span></div>
+          <div id="filament-list" class="scroll filaments"></div>
+        </div>
+      </aside>
+
+      <section id="viewport">
+        <canvas id="canvas3d"></canvas>
+        <div id="dropzone" class="dropzone">
+          <div class="dz-inner">
+            <div class="dz-icon"></div>
+            <div class="dz-title">拖入 .3mf 文件</div>
+            <div class="dz-sub">支持同时拖入多个文件进行组合</div>
+          </div>
+        </div>
+        <div id="viewport-hud">
+          <span id="hud-stats"></span>
+        </div>
+      </section>
+
+      <div id="right-toolbar">
+        <div id="gizmo-mode" class="tool-group">
+          <button data-mode="translate" class="tool active" title="移动 (W)">
+            <svg class="ic"><use href="#ic-move"/></svg><span>移动</span>
+          </button>
+          <button data-mode="rotate" class="tool" title="旋转 (E)">
+            <svg class="ic"><use href="#ic-rotate"/></svg><span>旋转</span>
+          </button>
+          <button data-mode="scale" class="tool" title="缩放 (R)">
+            <svg class="ic"><use href="#ic-scale"/></svg><span>缩放</span>
+          </button>
+        </div>
+        <div class="tool-sep"></div>
+        <button id="btn-drop" class="tool" title="落到热床">
+          <svg class="ic"><use href="#ic-drop"/></svg><span>落板</span>
+        </button>
+        <button id="btn-center" class="tool" title="移到热床中心">
+          <svg class="ic"><use href="#ic-center"/></svg><span>居中</span>
+        </button>
+        <button id="btn-duplicate" class="tool" title="复制 (Ctrl+D)">
+          <svg class="ic"><use href="#ic-duplicate"/></svg><span>复制</span>
+        </button>
+        <button id="btn-arrange" class="tool" title="自动排列全部">
+          <svg class="ic"><use href="#ic-arrange"/></svg><span>排列</span>
+        </button>
+        <div class="tool-sep"></div>
+        <button id="btn-delete" class="tool danger" title="删除 (Del)">
+          <svg class="ic"><use href="#ic-delete"/></svg><span>删除</span>
+        </button>
+      </div>
+
+      <aside id="right-panel">
+        <div class="panel-head"><span>属性</span></div>
+        <div id="inspector" class="scroll"></div>
+      </aside>
+    </main>
+
+    <footer id="statusbar">
+      <span id="status-text">就绪</span>
+      <span class="spacer"></span>
+      <span id="status-meta"></span>
+    </footer>
+  </div>
+
+  <input type="file" id="file-input" accept=".3mf" multiple hidden />
+  <div id="toast-host"></div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
