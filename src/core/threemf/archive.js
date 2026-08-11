@@ -100,6 +100,7 @@ export const CONTENT_TYPES_XML = `<?xml version="1.0" encoding="UTF-8"?>
  <Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/>
  <Default Extension="png" ContentType="image/png"/>
  <Default Extension="gcode" ContentType="text/x.gcode"/>
+ <Default Extension="config" ContentType="application/octet-stream"/>
 </Types>`;
 
 export const ROOT_RELS_XML = `<?xml version="1.0" encoding="UTF-8"?>

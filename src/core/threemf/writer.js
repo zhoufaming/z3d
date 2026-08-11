@@ -221,9 +221,31 @@ export async function writeThreeMF(project, opts = {}) {
       if (json.filament_type) json.filament_type = types;
     }
     archive.setText('Metadata/project_settings.config', JSON.stringify(json, null, 4));
+  } else if (project.filaments.length) {
+    // 纯新建（没有导入任何文件）时，基底归档是空的，需要自己造一份
+    // 最小可识别的 project_settings.config，否则 Bambu Studio 打开会缺热床/耗材。
+    archive.setText('Metadata/project_settings.config', JSON.stringify(defaultProjectJson(project), null, 4));
   }
 
   return archive.toBlob();
+}
+
+/** 纯新建项目时生成的最小 project_settings.config（模仿 Bambu 字段） */
+function defaultProjectJson(project) {
+  const { width, depth, height } = project.bed;
+  const area = [`0x0`, `${width}x0`, `${width}x${depth}`, `0x${depth}`];
+  return {
+    printer_model: 'Bambu Lab X1 Carbon',
+    printer_settings_id: 'Bambu Lab X1 Carbon 0.4 nozzle',
+    printable_area: area,
+    printable_height: String(height),
+    filament_colour: project.filaments.map((f) => (f.color || '#FFFFFF').toLowerCase()),
+    filament_type: project.filaments.map((f) => f.type || 'PLA'),
+    filament_settings_id: project.filaments.map(() => '\"\"'),
+    layer_height: 0.2,
+    sparse_infill_density: 15,
+    nozzle_diameter: 0.4,
+  };
 }
 
 function buildModelSettings(project, plan, baseDoc) {

@@ -16,15 +16,10 @@ min.log
 
 # 临时截图 / 验证产物
 *.png
-after-*.yaml
-empty.yaml
-imported.yaml
-color.yaml
-combine.yaml
-scale*.yaml
-sel-cube.yaml
-viewport.png
-ui-*.png
+*.yaml
+
+# 样例 3MF（由 make-sample 按需生成，避免二进制差异污染仓库）
+samples/*.3mf
 
 # 系统文件
 Thumbs.db

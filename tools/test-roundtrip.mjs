@@ -12,7 +12,8 @@ import { unzipSync, strFromU8 } from 'fflate';
 
 import { readThreeMF } from '../src/core/threemf/reader.js';
 import { writeThreeMF } from '../src/core/threemf/writer.js';
-import { Project } from '../src/core/project.js';
+import { Project, ScenePart, SceneObject } from '../src/core/project.js';
+import { createPrimitiveGeometry, PRIMITIVES } from '../src/core/primitives.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const samples = resolve(here, '../samples');
@@ -171,6 +172,55 @@ eq('组合件零件2 局部 Z 偏移保持', comboR.parts[1].localMatrix.element
 const totalTrisBefore = project.stats.triangles;
 const totalTrisAfter = project3.stats.triangles;
 eq('三角面总数无损', totalTrisAfter, totalTrisBefore);
+
+console.log('\n=== 7. 新建基础形状（无导入文件）导出 ===');
+// 模拟 App.createPrimitive 的核心步骤，但不依赖 DOM/viewer。
+const project7 = new Project();
+project7.ensureFilaments(4);
+for (const def of PRIMITIVES) {
+  const geo = createPrimitiveGeometry(def.id);
+  const part = new ScenePart({
+    name: def.name,
+    geometry: geo,
+    extruder: 1,
+    subtype: 'normal_part',
+    localMatrix: new THREE.Matrix4(),
+  });
+  part.applyColor(project7.filamentColor(part.extruder));
+  const obj = new SceneObject({ name: def.name, sourceObjectId: null });
+  obj.addPart(part);
+  project7.addObject(obj);
+}
+eq('新建对象数', project7.objects.length, PRIMITIVES.length);
+
+// 每个形状底面都应落在 z=0（sitOnBed 生效），且包围盒高度 > 0
+for (const o of project7.objects) {
+  const b = o.computeBox(new THREE.Box3());
+  check(`[${o.name}] 底面贴床`, Math.abs(b.min.z) < 1e-3, `min.z=${b.min.z}`);
+  check(`[${o.name}] 有高度`, b.getSize(new THREE.Vector3()).z > 0);
+  check(`[${o.name}] 有三角面`, o.triangleCount > 0, `tris=${o.triangleCount}`);
+}
+
+const blob7 = await writeThreeMF(project7);
+const buf7 = Buffer.from(await blob7.arrayBuffer());
+const entries7 = unzipSync(new Uint8Array(buf7));
+const names7 = Object.keys(entries7).sort();
+check('新建导出含 project_settings.config', names7.includes('Metadata/project_settings.config'));
+check('新建导出含 model_settings.config', names7.includes('Metadata/model_settings.config'));
+eq('新建几何文件数', names7.filter((n) => n.startsWith('3D/Objects/')).length, PRIMITIVES.length);
+const pj7 = JSON.parse(strFromU8(entries7['Metadata/project_settings.config']));
+eq('project_settings 含4个料槽', pj7.filament_colour.length, 4);
+check('project_settings 含热床区域', Array.isArray(pj7.printable_area) && pj7.printable_area.length >= 3);
+
+// 回读：纯新建导出的文件应能被正确解析，无导入文件时 baseDoc 为空，路径仍通
+const doc7 = await readThreeMF(new File([buf7], 'primitives-out.3mf'));
+const project7b = new Project();
+project7b.importDoc(doc7);
+eq('回读新建对象数', project7b.objects.length, PRIMITIVES.length);
+eq('回读新建源文件数(无导入)', project7b.docs.size, 1);
+for (const o of project7b.objects) {
+  check(`回读[${o.name}] 三角面>0`, o.triangleCount > 0);
+}
 
 console.log(`\n===== 结果：${passed} 通过 / ${failed} 失败 =====\n`);
 process.exit(failed ? 1 : 0);

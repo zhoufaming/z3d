@@ -93,6 +93,28 @@ html, body {
 .btn.icon { padding: 0 9px; }
 .btn.icon .ic { width: 17px; height: 17px; }
 
+/* 新建模型：按钮 + 形状选择浮层 */
+.btn .caret { font-size: 10px; color: var(--text-dim); margin-left: 1px; line-height: 1; }
+.new-wrap { position: relative; }
+.new-shape-panel {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 50;
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;
+  padding: 10px; width: 260px;
+  background: var(--bg-elev); border: 1px solid var(--line); border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.5);
+}
+.new-shape-panel.hidden { display: none; }
+.shape-card {
+  display: flex; flex-direction: column; align-items: center; gap: 5px;
+  padding: 10px 6px 8px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--bg-panel); color: var(--text-dim); cursor: pointer; font: inherit;
+  transition: background .12s, border-color .12s, color .12s, transform .08s;
+}
+.shape-card:hover { background: var(--bg-hover); border-color: var(--accent-line); color: var(--text); }
+.shape-card:active { transform: translateY(1px); }
+.shape-card svg { width: 34px; height: 34px; color: var(--accent); }
+.shape-card span { font-size: 11px; }
+
 .select {
   height: 30px; padding: 0 8px; border: 1px solid var(--line); border-radius: var(--radius);
   background: var(--bg-elev); color: var(--text); font: inherit; cursor: pointer; max-width: 180px;

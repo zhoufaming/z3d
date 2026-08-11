@@ -5,6 +5,7 @@ import { Project, PRINTER_PRESETS, SceneObject, ScenePart } from './core/project
 import { History, cloneSceneObject } from './core/history.js';
 import { readThreeMF } from './core/threemf/reader.js';
 import { writeThreeMF } from './core/threemf/writer.js';
+import { PRIMITIVES, createPrimitiveGeometry, primitiveName } from './core/primitives.js';
 import { ObjectTree } from './ui/tree.js';
 import { Inspector } from './ui/inspector.js';
 import { renderFilaments } from './ui/filaments.js';
@@ -100,6 +101,28 @@ class App {
       this.viewer.setBed(this.project.bed);
       this.inspector.render();
     };
+
+    // ---- 新建模型：弹出基础形状选择面板 ----
+    const newBtn = document.getElementById('btn-new');
+    const newPanel = document.getElementById('new-shape-panel');
+    newPanel.append(...PRIMITIVES.map((p) => {
+      const card = el('button', { class: 'shape-card', 'data-shape': p.id, title: `新建${p.name}` });
+      card.innerHTML = `${primitivePreview(p.id)}<span>${p.name}</span>`;
+      card.onclick = () => {
+        this.createPrimitive(p.id);
+        newPanel.classList.add('hidden');
+      };
+      return card;
+    }));
+    newBtn.onclick = (e) => {
+      e.stopPropagation();
+      newPanel.classList.toggle('hidden');
+    };
+    document.addEventListener('click', (e) => {
+      if (!newPanel.contains(e.target) && e.target !== newBtn && !newBtn.contains(e.target)) {
+        newPanel.classList.add('hidden');
+      }
+    });
   }
 
   setGizmoMode(mode) {
@@ -400,6 +423,45 @@ class App {
     toast(`已复制「${object.name}」`, 'ok');
   }
 
+  /** 新建一个基础 3D 形状对象并加入场景 */
+  createPrimitive(shapeId) {
+    const geo = createPrimitiveGeometry(shapeId);
+    if (!geo) {
+      toast(`未知形状：${shapeId}`, 'err');
+      return;
+    }
+    if (this.project.isEmpty || this.project.filaments.length === 0) {
+      this.project.ensureFilaments(4);
+    }
+
+    this.pushHistory();
+    this._historyLock = true;
+    try {
+      const part = new ScenePart({
+        name: primitiveName(shapeId),
+        geometry: geo,
+        extruder: 1,
+        subtype: 'normal_part',
+        localMatrix: new THREE.Matrix4(),
+      });
+      part.applyColor(this.project.filamentColor(part.extruder));
+
+      const obj = new SceneObject({ name: primitiveName(shapeId), sourceObjectId: null });
+      obj.addPart(part);
+
+      this.project.addObject(obj);
+      this.viewer.modelRoot.add(obj.group);
+      // 落到热床并居中，形状自带 sitOnBed，这里再对齐到床中心
+      this.dropToBed(obj);
+      this.centerOnBed(obj);
+      this.select(obj, null);
+      this.refreshAll();
+      toast(`已新建「${primitiveName(shapeId)}」`, 'ok');
+    } finally {
+      this._historyLock = false;
+    }
+  }
+
   /** 把所有对象按包围盒宽度从大到小重新摆到热床上，避免相互重叠 */
   arrangeAll() {
     if (this.project.isEmpty) return;
@@ -600,6 +662,20 @@ function downloadBlob(blob, filename) {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
+/** 基础形状的小预览图标（内联 SVG，2D 轮廓） */
+function primitivePreview(id) {
+  const C = 'currentColor';
+  const map = {
+    cube: `<svg viewBox="0 0 40 40"><g fill="none" stroke="${C}" stroke-width="1.6" stroke-linejoin="round"><path d="M20 6l11 6v16l-11 6-11-6V12z"/><path d="M20 6v20M9 12l11 6 11-6"/></g></svg>`,
+    cylinder: `<svg viewBox="0 0 40 40"><g fill="none" stroke="${C}" stroke-width="1.6"><ellipse cx="20" cy="11" rx="9" ry="3.4"/><path d="M11 11v18M29 11v18"/><ellipse cx="20" cy="29" rx="9" ry="3.4"/></g></svg>`,
+    sphere: `<svg viewBox="0 0 40 40"><g fill="none" stroke="${C}" stroke-width="1.6"><circle cx="20" cy="20" r="12"/><path d="M8 20h24M20 8c6 4 6 20 0 24M20 8c-6 4-6 20 0 24"/></g></svg>`,
+    cone: `<svg viewBox="0 0 40 40"><g fill="none" stroke="${C}" stroke-width="1.6" stroke-linejoin="round"><path d="M20 8l10 21H10z"/><ellipse cx="20" cy="29" rx="10" ry="3.4"/></g></svg>`,
+    pyramid: `<svg viewBox="0 0 40 40"><g fill="none" stroke="${C}" stroke-width="1.6" stroke-linejoin="round"><path d="M20 7l11 22H9z"/><path d="M9 29l11-8 11 8"/></g></svg>`,
+    torus: `<svg viewBox="0 0 40 40"><g fill="none" stroke="${C}" stroke-width="1.6"><circle cx="20" cy="20" r="12"/><circle cx="20" cy="20" r="4.5"/></g></svg>`,
+  };
+  return map[id] || '';
 }
 
 window.app = new App();
