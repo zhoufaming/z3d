@@ -17,6 +17,8 @@ min.log
 # 临时截图 / 验证产物
 *.png
 *.yaml
+# 但保留 README / 文档内的展示截图
+!docs/images/*.png
 
 # 调试脚本与验证输出（本次开发期产物，非功能代码）
 tools/cdp-render.mjs
