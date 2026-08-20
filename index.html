@@ -299,6 +299,27 @@
       <span>AI 辅助控制</span>
       <button id="ai-close" class="ai-x" title="收起">✕</button>
     </div>
+
+    <!-- 模式切换：本地确定性解析 / 大模型 API -->
+    <div class="ai-mode-row">
+      <label class="ai-mode-opt"><input type="radio" name="ai-mode" value="local" checked> 本地解析</label>
+      <label class="ai-mode-opt"><input type="radio" name="ai-mode" value="llm"> 大模型</label>
+      <button id="ai-llm-cfg-btn" type="button" class="ai-cfg-btn hidden">配置…</button>
+    </div>
+
+    <!-- 大模型配置（可折叠，默认隐藏） -->
+    <div id="ai-llm-cfg" class="ai-llm-cfg hidden">
+      <input id="ai-llm-url" type="text" class="ai-cfg-input" placeholder="API URL（OpenAI 兼容 /v1/chat/completions）" autocomplete="off" spellcheck="false">
+      <input id="ai-llm-key" type="password" class="ai-cfg-input" placeholder="API Key（Bearer）" autocomplete="off">
+      <input id="ai-llm-model" type="text" class="ai-cfg-input" placeholder="模型名，如 deepseek-chat" autocomplete="off" spellcheck="false">
+      <div class="ai-llm-row">
+        <label class="ai-temp-label">温度 <input id="ai-llm-temp" type="number" min="0" max="2" step="0.1" value="0.2"></label>
+        <button id="ai-llm-save" type="button" class="btn">保存</button>
+        <button id="ai-llm-test" type="button" class="btn">测试连接</button>
+      </div>
+      <div class="ai-llm-hint">支持 DeepSeek / 通义 / Kimi / 智谱 GLM / OpenAI / Ollama 等 OpenAI 兼容服务。配置保存在本地 localStorage。</div>
+    </div>
+
     <div class="ai-status-row">
       <span>状态：<b id="ai-status" class="ai-off">已关闭</b></span>
     </div>
@@ -323,6 +344,8 @@
       <button id="ai-run" class="btn primary">执行 (Ctrl+Enter)</button>
       <button id="ai-clear" class="btn">清空日志</button>
     </div>
+    <!-- 大模型思考流（流式输出，仅 LLM 模式显示） -->
+    <div id="ai-think" class="ai-think hidden"></div>
     <div id="ai-log" class="ai-log"></div>
   </div>
 

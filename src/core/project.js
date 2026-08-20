@@ -7,6 +7,7 @@
 import * as THREE from 'three';
 import { flattenObject } from './threemf/reader.js';
 import { metaValue, normalizeColor } from './threemf/bambu-config.js';
+import { DEFAULT_BED } from './constants.js';
 
 let uidSeq = 1;
 const nextUid = () => `u${uidSeq++}`;
@@ -81,8 +82,8 @@ export class SceneObject {
     this.name = init.name || 'object';
     this.sourceObjectId = init.sourceObjectId;
     this.printable = init.printable !== false;
-    /** 归属的热床 id；非当前热床的对象在视口隐藏 */
-    this.plateId = init.plateId ?? 0;
+    /** 归属的热床 id；非当前热床的对象在视口隐藏。未指定时落到当前热床（见 addObject） */
+    this.plateId = init.plateId ?? null;
     /** 眼睛图标控制的用户显隐（与热床显隐叠加生效） */
     this.userVisible = init.userVisible !== false;
     /** @type {ScenePart[]} */
@@ -106,7 +107,8 @@ export class SceneObject {
     const tmp = new THREE.Box3();
     for (const p of this.parts) {
       if (!p.visible) continue;
-      p.geometry.computeBoundingBox();
+      // 几何未变（或已被替换）时复用缓存，避免每次都重算包围盒
+      if (!p.geometry.boundingBox) p.geometry.computeBoundingBox();
       tmp.copy(p.geometry.boundingBox).applyMatrix4(p.mesh.matrixWorld);
       target.union(tmp);
     }
@@ -132,7 +134,7 @@ export class Project {
     this.objects = [];
     /** @type {{index:number,color:string,type:string}[]} */
     this.filaments = [];
-    this.bed = { width: 256, depth: 256, height: 256 };
+    this.bed = { ...DEFAULT_BED };
     this.printerPreset = 'auto';
     /** 多热床：每个对象归属一个热床；视口只显示当前热床的对象 */
     this.plates = [{ id: 0, name: '热床 1' }];

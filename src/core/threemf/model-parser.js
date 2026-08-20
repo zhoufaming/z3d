@@ -60,7 +60,9 @@ function parseMesh(xml, meshStart, meshEnd) {
   /** @type {Map<number, object>|null} 三角形上的非几何属性（MMU 涂色、材质），需原样保留 */
   let triAttrs = null;
 
-  if (tStart > 0 && tEnd !== -1) {
+  // 与 vertices 对称的边界校验：缺 <triangles> 的损坏文件不能把
+  // 下一个 object 的三角形区间读进来
+  if (tStart > 0 && tEnd !== -1 && tStart < meshEnd && tEnd <= meshEnd) {
     const count = countOccurrences(xml, '<triangle', tStart, tEnd);
     indices = new Uint32Array(count * 3);
     let p = 0;
@@ -126,21 +128,6 @@ export function serialize3mfTransform(elements, fmt) {
   const e = elements;
   const v = [e[0], e[1], e[2], e[4], e[5], e[6], e[8], e[9], e[10], e[12], e[13], e[14]];
   return v.map(fmt).join(' ');
-}
-
-/**
- * model_settings.config 里的 matrix 是 16 个数，同样是行主序行向量约定。
- */
-export function parseConfigMatrix(str) {
-  if (!str) return null;
-  const v = str.trim().split(/\s+/).map(Number);
-  if (v.length < 16 || v.some((n) => !Number.isFinite(n))) return null;
-  return [
-    v[0], v[1], v[2], v[3],
-    v[4], v[5], v[6], v[7],
-    v[8], v[9], v[10], v[11],
-    v[12], v[13], v[14], v[15],
-  ];
 }
 
 export function serializeConfigMatrix(elements, fmt) {
@@ -245,7 +232,9 @@ export function parseModelXml(xml) {
         if (compStart !== -1 && compStart < scopeEnd) {
           const compEnd = xml.indexOf('</components>', compStart);
           const cStop = compEnd === -1 ? scopeEnd : compEnd;
-          let j = compStart;
+          // 起点跳过 <components> 容器标签本身：'<component' 是 '<components' 的前缀，
+          // 从 compStart 直接找会把容器标签当成第一个组件（幽灵 objectid:null）
+          let j = xml.indexOf('>', compStart) + 1;
           for (;;) {
             const c = xml.indexOf('<component', j);
             if (c === -1 || c >= cStop) break;

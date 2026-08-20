@@ -55,6 +55,7 @@ export function mirrorObject(source, axis, ScenePart, SceneObject) {
     sourceObjectId: source.sourceObjectId,
     printable: source.printable,
     settingsObject: source.settingsObject,
+    plateId: source.plateId,
   });
   copy.group.position.copy(source.group.position);
   copy.group.quaternion.copy(source.group.quaternion);
@@ -340,12 +341,11 @@ export function booleanObjects(a, b, op, SceneObject, ScenePart) {
   return obj;
 }
 
-/** 收集所有可打印、可见零件的世界坐标三角形（Vector3 扁平数组 [A,B,C,A,B,C,...]） */
+/** 收集所有可打印、可见零件的世界坐标三角形，写入扁平 Float32Array（[Ax,Ay,Az,Bx,By,Bz,Cx,Cy,Cz,...]） */
 function collectWorldTriangles(project) {
-  const out = [];
-  const va = new THREE.Vector3();
-  const vb = new THREE.Vector3();
-  const vc = new THREE.Vector3();
+  // 先统计总三角数，避免过程中反复扩容
+  const work = [];
+  let total = 0;
   for (const o of project.activeObjects()) {
     if (!o.printable) continue;
     o.group.updateMatrixWorld(true);
@@ -353,18 +353,30 @@ function collectWorldTriangles(project) {
       if (!p.visible) continue;
       const geo = p.geometry;
       const pos = geo.getAttribute('position');
-      const m = new THREE.Matrix4().multiplyMatrices(o.group.matrixWorld, p.localMatrix);
       const idx = geo.getIndex();
       const n = idx ? idx.count : pos.count;
-      for (let t = 0; t < n; t += 3) {
-        const i0 = idx ? idx.getX(t) : t;
-        const i1 = idx ? idx.getX(t + 1) : t + 1;
-        const i2 = idx ? idx.getX(t + 2) : t + 2;
-        va.fromBufferAttribute(pos, i0).applyMatrix4(m);
-        vb.fromBufferAttribute(pos, i1).applyMatrix4(m);
-        vc.fromBufferAttribute(pos, i2).applyMatrix4(m);
-        out.push(va.clone(), vb.clone(), vc.clone());
-      }
+      total += n / 3;
+      work.push({ pos, idx, m: new THREE.Matrix4().multiplyMatrices(o.group.matrixWorld, p.localMatrix) });
+    }
+  }
+  const out = new Float32Array(total * 9);
+  const va = new THREE.Vector3();
+  const vb = new THREE.Vector3();
+  const vc = new THREE.Vector3();
+  let o = 0;
+  for (const w of work) {
+    const { pos, idx, m } = w;
+    const n = idx ? idx.count : pos.count;
+    for (let t = 0; t < n; t += 3) {
+      const i0 = idx ? idx.getX(t) : t;
+      const i1 = idx ? idx.getX(t + 1) : t + 1;
+      const i2 = idx ? idx.getX(t + 2) : t + 2;
+      va.fromBufferAttribute(pos, i0).applyMatrix4(m);
+      vb.fromBufferAttribute(pos, i1).applyMatrix4(m);
+      vc.fromBufferAttribute(pos, i2).applyMatrix4(m);
+      out[o++] = va.x; out[o++] = va.y; out[o++] = va.z;
+      out[o++] = vb.x; out[o++] = vb.y; out[o++] = vb.z;
+      out[o++] = vc.x; out[o++] = vc.y; out[o++] = vc.z;
     }
   }
   return out;
@@ -376,7 +388,7 @@ function collectWorldTriangles(project) {
  */
 export function writeSTL(project) {
   const tris = collectWorldTriangles(project);
-  const triCount = tris.length / 3;
+  const triCount = tris.length / 9;
   const buf = new ArrayBuffer(84 + triCount * 50);
   const dv = new DataView(buf);
   // 80 字节头（留空）
@@ -385,28 +397,28 @@ export function writeSTL(project) {
   const ab = new THREE.Vector3();
   const ac = new THREE.Vector3();
   const nrm = new THREE.Vector3();
+  const A0 = new THREE.Vector3();
   for (let t = 0; t < triCount; t++) {
-    const A = tris[t * 3];
-    const B = tris[t * 3 + 1];
-    const C = tris[t * 3 + 2];
-    ab.subVectors(B, A);
-    ac.subVectors(C, A);
+    const a = t * 9, b = t * 9 + 3, c = t * 9 + 6;
+    A0.set(tris[a], tris[a + 1], tris[a + 2]);
+    ab.set(tris[b], tris[b + 1], tris[b + 2]).sub(A0);
+    ac.set(tris[c], tris[c + 1], tris[c + 2]).sub(A0);
     nrm.crossVectors(ab, ac).normalize();
     dv.setFloat32(off, nrm.x, true);
     dv.setFloat32(off + 4, nrm.y, true);
     dv.setFloat32(off + 8, nrm.z, true);
     off += 12;
-    dv.setFloat32(off, A.x, true);
-    dv.setFloat32(off + 4, A.y, true);
-    dv.setFloat32(off + 8, A.z, true);
+    dv.setFloat32(off, A0.x, true);
+    dv.setFloat32(off + 4, A0.y, true);
+    dv.setFloat32(off + 8, A0.z, true);
     off += 12;
-    dv.setFloat32(off, B.x, true);
-    dv.setFloat32(off + 4, B.y, true);
-    dv.setFloat32(off + 8, B.z, true);
+    dv.setFloat32(off, tris[b], true);
+    dv.setFloat32(off + 4, tris[b + 1], true);
+    dv.setFloat32(off + 8, tris[b + 2], true);
     off += 12;
-    dv.setFloat32(off, C.x, true);
-    dv.setFloat32(off + 4, C.y, true);
-    dv.setFloat32(off + 8, C.z, true);
+    dv.setFloat32(off, tris[c], true);
+    dv.setFloat32(off + 4, tris[c + 1], true);
+    dv.setFloat32(off + 8, tris[c + 2], true);
     off += 12;
     dv.setUint16(off, 0, true);
     off += 2;

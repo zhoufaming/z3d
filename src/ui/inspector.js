@@ -206,10 +206,17 @@ export class Inspector {
     const fields = [];
     const wrap = el('div', { class: 'xyz', style: { flex: '1' } });
     axes.forEach((a, i) => {
+      // 一次聚焦会话（含方向键连按）只记一次历史，避免撤销栈被刷爆
+      let edited = false;
       const input = numberInput(0, (v) => {
-        this.app.pushHistory();
+        if (!edited) {
+          this.app.pushHistory();
+          edited = true;
+        }
         onCommit(i, v);
       }, { digits: 2 });
+      input.addEventListener('focus', () => { edited = false; });
+      input.addEventListener('blur', () => { edited = false; });
       fields.push(input);
       wrap.append(
         el('div', { class: 'xyz-item' }, [

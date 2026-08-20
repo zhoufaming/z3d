@@ -238,13 +238,26 @@ export class Viewer {
     this.clipPlane = plane;
     this.renderer.localClippingEnabled = !!plane;
     const clips = plane ? [plane] : null;
-    this.modelRoot.traverse((o) => {
-      if (o.isMesh && o.material) {
-        o.material.clippingPlanes = clips;
-        o.material.clipShadows = true;
-        o.material.needsUpdate = true;
-      }
-    });
+    const count = clips ? clips.length : 0;
+    // 仅当裁剪平面「数量」变化时材质才需重编译着色器；平面仅平移无需重编译
+    const prevCount = this._clipCount ?? 0;
+    if (count !== prevCount) {
+      this.modelRoot.traverse((o) => {
+        if (o.isMesh && o.material) {
+          o.material.clippingPlanes = clips;
+          o.material.clipShadows = true;
+          o.material.needsUpdate = true;
+        }
+      });
+    } else {
+      this.modelRoot.traverse((o) => {
+        if (o.isMesh && o.material) {
+          o.material.clippingPlanes = clips;
+          o.material.clipShadows = true;
+        }
+      });
+    }
+    this._clipCount = count;
     this.requestRender();
   }
 

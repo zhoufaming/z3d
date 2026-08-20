@@ -92,8 +92,10 @@ function sendToBridge(command) {
 }
 
 function startAIServer(port, token) {
-  if (aiServer) return;
+  // 无条件刷新 token：页面重载后再次「开启 AI 辅助」会生成新 token，
+  // 服务已存在时也必须换用新值，否则外部 AI 会一直 403
   aiToken = token;
+  if (aiServer) return;
   aiServer = http.createServer((req, res) => {
     const send = (code, obj) => {
       res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -146,11 +148,78 @@ function stopAIServer() {
 
 ipcMain.handle('ai:enable', (e, { port, token }) => { startAIServer(port, token); return { ok: true, port }; });
 ipcMain.handle('ai:disable', () => { stopAIServer(); return { ok: true }; });
+
+// ==================================================================
+// 本地配置存储（JSON 文件持久化）
+// ------------------------------------------------------------------
+// 用户敏感配置（如大模型 API Key）不写源码、不进 git，
+// 存到 userData/config.json。
+//
+// 如需 SQLite：安装 better-sqlite3 + @electron/rebuild 重编译后，
+// 设置环境变量 BAMBU_USE_SQLITE=1 即可自动切换到 SQLite（config.db）。
+// ==================================================================
+let db = null;
+let cfgFile = null;
+let cfgCache = null;
+
+function initConfigStorage() {
+  const userData = app.getPath('userData');
+  if (process.env.BAMBU_USE_SQLITE === '1') {
+    try {
+      const Database = require('better-sqlite3');
+      const dbPath = path.join(userData, 'config.db');
+      db = new Database(dbPath);
+      db.exec(`CREATE TABLE IF NOT EXISTS kv_store (
+        key   TEXT PRIMARY KEY,
+        value TEXT,
+        updated_at INTEGER
+      )`);
+      console.log('[CFG] SQLite 配置存储就绪:', dbPath);
+      return;
+    } catch (err) {
+      console.warn('[CFG] SQLite 加载失败，降级到 JSON:', err.message);
+    }
+  }
+  cfgFile = path.join(userData, 'config.json');
+  try { cfgCache = JSON.parse(fs.readFileSync(cfgFile, 'utf-8') || '{}'); }
+  catch (_) { cfgCache = {}; }
+  console.log('[CFG] JSON 配置存储就绪:', cfgFile);
+}
+
+ipcMain.handle('cfg:get', (e, key) => {
+  if (db) {
+    const row = db.prepare('SELECT value FROM kv_store WHERE key = ?').get(key);
+    return row ? row.value : null;
+  }
+  return cfgCache ? (cfgCache[key] ?? null) : null;
+});
+
+ipcMain.handle('cfg:set', (e, key, value) => {
+  if (db) {
+    db.prepare('INSERT OR REPLACE INTO kv_store (key, value, updated_at) VALUES (?, ?, ?)')
+      .run(key, String(value), Date.now());
+  } else {
+    if (!cfgCache) cfgCache = {};
+    cfgCache[key] = String(value);
+    if (cfgFile) fs.writeFileSync(cfgFile, JSON.stringify(cfgCache, null, 2));
+  }
+  return { ok: true };
+});
+
+// 出于安全考虑，文件读写仅限模型文件（.3mf/.stl）：这两个 handle 启动即注册，
+// 若不限制扩展名，渲染进程被攻破或 token 泄漏时主进程会成为任意文件读写原语。
+const MODEL_FILE_RE = /\.(3mf|stl)$/i;
 ipcMain.handle('fs:writeFile', (e, { path: p, base64 }) => {
+  if (!MODEL_FILE_RE.test(String(p || ''))) {
+    return { ok: false, error: '只允许写入 .3mf / .stl 模型文件' };
+  }
   fs.writeFileSync(p, Buffer.from(base64, 'base64'));
   return { ok: true, path: p };
 });
 ipcMain.handle('fs:readFile', (e, { path: p }) => {
+  if (!MODEL_FILE_RE.test(String(p || ''))) {
+    return { ok: false, error: '只允许读取 .3mf / .stl 模型文件' };
+  }
   const buf = fs.readFileSync(p);
   return { ok: true, base64: buf.toString('base64') };
 });
@@ -240,6 +309,7 @@ function createWindow() {
 
 let server = null;
 app.whenReady().then(async () => {
+  initConfigStorage();
   server = await startStaticServer();
   mainWindow = createWindow();
 

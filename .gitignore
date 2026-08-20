@@ -38,3 +38,11 @@ samples/*.3mf
 # 系统文件
 Thumbs.db
 .DS_Store
+
+# SQLite 数据库与配置文件（含 API Key 等敏感信息，不进仓库）
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+config.json
+config.db

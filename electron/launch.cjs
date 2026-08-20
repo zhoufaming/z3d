@@ -17,8 +17,11 @@ const path = require('node:path');
 // 真正的 electron 可执行文件
 const exe = path.join(__dirname, '..', 'node_modules', 'electron', 'dist', 'electron.exe');
 
-// 去掉会让 electron 退化成 node 的环境变量
+// 清理会让 electron 退化成 node 或直接拒绝启动的环境变量：
+// - ELECTRON_RUN_AS_NODE：让 electron 退化成普通 node
+// - NODE_OPTIONS（本机可能被注入 --use-system-ca 等 electron 不允许的标志）
 delete process.env.ELECTRON_RUN_AS_NODE;
+delete process.env.NODE_OPTIONS;
 
 const args = process.argv.slice(2);
 
@@ -39,6 +42,7 @@ if (process.env.BAMBU_ELECTRON_DISABLE_GPU === '1') {
 
 const childEnv = { ...process.env };
 delete childEnv.ELECTRON_RUN_AS_NODE;
+delete childEnv.NODE_OPTIONS;
 
 const child = spawn(exe, [...safeFlags, ...(args.length ? args : ['.'])], {
   stdio: 'inherit',

@@ -7,10 +7,11 @@
  */
 import * as THREE from 'three';
 import earcut from 'earcut';
+import { WELD_TOLERANCE } from './constants.js';
 
 const EPS = 1e-4;
 
-function key3(x, y, z, tol = 1e-3) {
+function key3(x, y, z, tol = WELD_TOLERANCE) {
   const q = (v) => Math.round(v / tol);
   return `${q(x)},${q(y)},${q(z)}`;
 }
@@ -186,11 +187,13 @@ export function repairGeometry(src) {
   };
 }
 
-/** 给单个零件做修复并替换几何（不释放旧几何，留给撤销快照） */
+/** 给单个零件做修复并替换几何（旧几何由撤销快照持有，必要时释放） */
 export function repairPart(part) {
   const { geometry, report } = repairGeometry(part.geometry);
   part.geometry = geometry;
   part.mesh.geometry = geometry;
+  // 修复会重排/增删三角形，原文件的三形级属性（MMU 涂色等）索引全部失效，宁可丢弃也不错位
+  part.triAttrs = null;
   part.material.side = THREE.DoubleSide;
   part.material.needsUpdate = true;
   return report;

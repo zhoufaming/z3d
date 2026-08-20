@@ -9,7 +9,11 @@ import { PRIMITIVES, createPrimitiveGeometry, primitiveName } from './core/primi
 import { splitShells, cutObject, gridLayout, createBase } from './core/split.js';
 import { mirrorObject, arrayObjects, collapseObject, writeSTL, mergeObjects, buildAutoBase, booleanObjects } from './core/ops.js';
 import { repairPart } from './core/repair.js';
-import { CommandBridge, parseInstruction } from './core/ai-bridge.js';
+import { CommandBridge, parseInstruction, COMMAND_DOCS } from './core/ai-bridge.js';
+import {
+  loadLLMConfig, saveLLMConfig, callLLM, buildPlanMessages, extractPlanFromResponse,
+} from './core/llm.js';
+import { PORT_AI, DEFAULT_BED } from './core/constants.js';
 import { ObjectTree } from './ui/tree.js';
 import { Inspector } from './ui/inspector.js';
 import { renderFilaments } from './ui/filaments.js';
@@ -62,6 +66,17 @@ class App {
   constructor() {
     this.project = new Project();
     this.viewer = new Viewer(document.getElementById('canvas3d'));
+    // 窗口卸载（Electron 重载 / 切换）时释放 WebGL 上下文与渲染树，避免泄漏
+    window.addEventListener('beforeunload', () => this.viewer?.dispose());
+    // 统一「点击面板外部关闭」：所有面板共用一个 document 监听（见 _registerOutsideClick）
+    this._outsideClickTargets = [];
+    document.addEventListener('click', (e) => {
+      for (const t of this._outsideClickTargets) {
+        if (!t.panel.contains(e.target) && e.target !== t.btn && !(t.btn && t.btn.contains(e.target))) {
+          t.panel.classList.add('hidden');
+        }
+      }
+    });
     this.selection = { object: null, part: null };
     this.selectedSet = new Set(); // 多选集合（含主选择）
     this._clipPlane = null; // 当前剖面裁剪平面（THREE.Plane | null）
@@ -178,11 +193,7 @@ class App {
     document.getElementById('clip-axis').addEventListener('change', clipApply);
     document.getElementById('clip-pos').addEventListener('input', clipApply);
     document.getElementById('clip-on').addEventListener('change', clipApply);
-    document.addEventListener('click', (e) => {
-      if (!clipPanel.contains(e.target) && e.target !== clipBtn && !clipBtn.contains(e.target)) {
-        clipPanel.classList.add('hidden');
-      }
-    });
+    this._outsideClickTargets.push({ panel: clipPanel, btn: clipBtn });
 
     // ---- 布尔运算 ----
     const boolBtn = document.getElementById('btn-boolean');
@@ -197,11 +208,7 @@ class App {
         boolPanel.classList.add('hidden');
       };
     }
-    document.addEventListener('click', (e) => {
-      if (!boolPanel.contains(e.target) && e.target !== boolBtn && !boolBtn.contains(e.target)) {
-        boolPanel.classList.add('hidden');
-      }
-    });
+    this._outsideClickTargets.push({ panel: boolPanel, btn: boolBtn });
     document.getElementById('btn-arrange').onclick = () => this.arrangeAll();
     document.getElementById('btn-measure').onclick = () => this.toggleMeasure();
     document.getElementById('btn-clear-measure').onclick = () => this.clearMeasurements();
@@ -249,7 +256,7 @@ class App {
         const base = this.project.docs.get(this.project.baseDocId);
         this.project.bed = base?.projectInfo?.bed
           ? { ...base.projectInfo.bed }
-          : { width: 256, depth: 256, height: 256 };
+          : { ...DEFAULT_BED };
       } else {
         this.project.bed = { width: preset.width, depth: preset.depth, height: preset.height };
       }
@@ -273,11 +280,7 @@ class App {
       e.stopPropagation();
       newPanel.classList.toggle('hidden');
     };
-    document.addEventListener('click', (e) => {
-      if (!newPanel.contains(e.target) && e.target !== newBtn && !newBtn.contains(e.target)) {
-        newPanel.classList.add('hidden');
-      }
-    });
+    this._outsideClickTargets.push({ panel: newPanel, btn: newBtn });
 
     // ---- 镜像：X / Y / Z 轴 ----
     const mirrorBtn = document.getElementById('btn-mirror');
@@ -292,11 +295,7 @@ class App {
         mirrorPanel.classList.add('hidden');
       };
     }
-    document.addEventListener('click', (e) => {
-      if (!mirrorPanel.contains(e.target) && e.target !== mirrorBtn && !mirrorBtn.contains(e.target)) {
-        mirrorPanel.classList.add('hidden');
-      }
-    });
+    this._outsideClickTargets.push({ panel: mirrorPanel, btn: mirrorBtn });
 
     // ---- 阵列：线性 / 圆形 ----
     const arrayBtn = document.getElementById('btn-array');
@@ -327,11 +326,7 @@ class App {
       this.arraySelected(opts);
       arrayPanel.classList.add('hidden');
     };
-    document.addEventListener('click', (e) => {
-      if (!arrayPanel.contains(e.target) && e.target !== arrayBtn && !arrayBtn.contains(e.target)) {
-        arrayPanel.classList.add('hidden');
-      }
-    });
+    this._outsideClickTargets.push({ panel: arrayPanel, btn: arrayBtn });
 
     // ---- 拆件：拆分 / 切割 ----
     const splitBtn = document.getElementById('btn-split');
@@ -384,11 +379,7 @@ class App {
       }
       splitPanel.classList.add('hidden');
     };
-    document.addEventListener('click', (e) => {
-      if (!splitPanel.contains(e.target) && e.target !== splitBtn && !splitBtn.contains(e.target)) {
-        splitPanel.classList.add('hidden');
-      }
-    });
+    this._outsideClickTargets.push({ panel: splitPanel, btn: splitBtn });
   }
 
   setGizmoMode(mode) {
@@ -530,16 +521,20 @@ class App {
       e.preventDefault();
       e.stopPropagation();
     };
+    // 用 enter/leave 计数器判断真正离开窗口（避免子元素间移动误判、避免拖到开发者工具/iframe 时残留遮罩）
+    let dragDepth = 0;
     for (const type of ['dragenter', 'dragover']) {
       window.addEventListener(type, (e) => {
         stop(e);
+        dragDepth++;
         dropzone.classList.remove('hidden');
         dropzone.classList.add('dragover');
       });
     }
     window.addEventListener('dragleave', (e) => {
       stop(e);
-      if (e.clientX === 0 && e.clientY === 0) {
+      dragDepth = Math.max(0, dragDepth - 1);
+      if (dragDepth === 0 && e.relatedTarget === null) {
         dropzone.classList.remove('dragover');
         if (!this.project.isEmpty) dropzone.classList.add('hidden');
       }
@@ -655,7 +650,7 @@ class App {
   }
 
   // ==================== AI 辅助面板（opt-in 控制桥） ====================
-  bindAIPanel() {
+  async bindAIPanel() {
     const toggle = document.getElementById('ai-enable');
     if (!toggle) return; // 面板不存在则不绑定（如旧版 index.html）
     const statusEl = document.getElementById('ai-status');
@@ -669,6 +664,18 @@ class App {
     const panel = document.getElementById('ai-panel');
     const closeBtn = document.getElementById('ai-close');
 
+    // 大模型模式相关元素
+    const modeRadios = panel.querySelectorAll('input[name="ai-mode"]');
+    const cfgBtn = document.getElementById('ai-llm-cfg-btn');
+    const cfgBox = document.getElementById('ai-llm-cfg');
+    const cfgUrl = document.getElementById('ai-llm-url');
+    const cfgKey = document.getElementById('ai-llm-key');
+    const cfgModel = document.getElementById('ai-llm-model');
+    const cfgTemp = document.getElementById('ai-llm-temp');
+    const cfgSave = document.getElementById('ai-llm-save');
+    const cfgTest = document.getElementById('ai-llm-test');
+    const thinkEl = document.getElementById('ai-think');
+
     const log = (line, kind = 'info') => {
       const ts = new Date().toLocaleTimeString();
       const div = document.createElement('div');
@@ -678,6 +685,75 @@ class App {
       logEl.scrollTop = logEl.scrollHeight;
     };
     this._aiLog = log;
+
+    // ---- 加载并应用大模型配置（异步，走 SQLite） ----
+    const llmConfig = await loadLLMConfig();
+    this.llmConfig = llmConfig;
+    const applyConfigToUI = () => {
+      cfgUrl.value = llmConfig.apiUrl || '';
+      cfgKey.value = llmConfig.apiKey || '';
+      cfgModel.value = llmConfig.model || '';
+      cfgTemp.value = llmConfig.temperature ?? 0.2;
+      // 同步模式 radio
+      modeRadios.forEach((r) => { r.checked = (r.value === llmConfig.mode); });
+      // 大模型模式下显示配置按钮
+      cfgBtn.classList.toggle('hidden', llmConfig.mode !== 'llm');
+    };
+    applyConfigToUI();
+
+    // ---- 模式切换 ----
+    modeRadios.forEach((r) => {
+      r.addEventListener('change', () => {
+        if (!r.checked) return;
+        llmConfig.mode = r.value;
+        saveLLMConfig(llmConfig);
+        cfgBtn.classList.toggle('hidden', r.value !== 'llm');
+        if (r.value === 'llm' && !llmConfig.apiUrl) {
+          cfgBox.classList.remove('hidden');
+          log('未配置大模型 API，请先填写配置', 'info');
+        }
+        if (r.value === 'local') cfgBox.classList.add('hidden');
+        log(`模式切换：${r.value === 'llm' ? '大模型' : '本地解析'}`, 'info');
+      });
+    });
+
+    // ---- 配置区显示/隐藏 ----
+    cfgBtn && cfgBtn.addEventListener('click', () => cfgBox.classList.toggle('hidden'));
+
+    // ---- 保存配置（异步，走 SQLite） ----
+    cfgSave && cfgSave.addEventListener('click', async () => {
+      llmConfig.apiUrl = cfgUrl.value.trim();
+      llmConfig.apiKey = cfgKey.value.trim();
+      llmConfig.model = cfgModel.value.trim();
+      llmConfig.temperature = Math.max(0, Math.min(2, parseFloat(cfgTemp.value) || 0.2));
+      await saveLLMConfig(llmConfig);
+      log('大模型配置已保存到本地数据库', 'ok');
+      cfgBox.classList.add('hidden');
+    });
+
+    // ---- 测试连接 ----
+    cfgTest && cfgTest.addEventListener('click', async () => {
+      const testCfg = {
+        apiUrl: cfgUrl.value.trim(),
+        apiKey: cfgKey.value.trim(),
+        model: cfgModel.value.trim() || 'deepseek-chat',
+        temperature: 0,
+        timeoutMs: 20000,
+      };
+      if (!testCfg.apiUrl) { log('请先填写 API URL', 'err'); return; }
+      log('测试连接中…', 'info');
+      thinkEl.classList.remove('hidden');
+      thinkEl.textContent = '';
+      try {
+        const full = await callLLM(testCfg, [
+          { role: 'system', content: '你是测试助手。只回复一个字：ok' },
+          { role: 'user', content: 'ping' },
+        ], { onToken: (t) => { thinkEl.textContent += t; thinkEl.scrollTop = thinkEl.scrollHeight; } });
+        log(`连接成功，模型返回：${(full || '').slice(0, 60)}`, 'ok');
+      } catch (err) {
+        log(`连接失败：${err && err.message}`, 'err');
+      }
+    });
 
     // 示例指令点击即填入输入框
     if (samples) {
@@ -691,7 +767,7 @@ class App {
         // 生成一个一次性 token，外部 AI 须携带它才能下发命令
         const token = Array.from(crypto.getRandomValues(new Uint8Array(16)))
           .map((b) => b.toString(16).padStart(2, '0')).join('');
-        const port = 5199;
+        const port = PORT_AI;
         statusEl.textContent = '已开启（本地控制服务）';
         statusEl.className = 'ai-on';
         portEl.textContent = String(port);
@@ -706,6 +782,9 @@ class App {
           }
         } else {
           log('无主进程通道（window.bambu），仅支持本面板内指令。', 'info');
+        }
+        if (this.llmConfig.mode === 'llm' && !this.llmConfig.apiUrl) {
+          log('当前为大模型模式但未配置 API，请点「配置…」填写', 'info');
         }
       } else {
         statusEl.textContent = '已关闭';
@@ -733,26 +812,83 @@ class App {
     });
   }
 
-  /** 在面板内执行一条指令：支持 JSON 命令 / 命令计划，或自然语言（走确定性解析器） */
+  /** 在面板内执行一条指令：JSON 命令 / 本地自然语言解析 / 大模型翻译 */
   async aiRun(text, log) {
     text = (text || '').trim();
     if (!text) return;
     log(`指令: ${text}`);
-    let plan;
-    try {
-      if (text.startsWith('{') || text.startsWith('[')) {
+
+    // JSON 命令 / 命令计划：直接执行（所有模式通用）
+    if (text.startsWith('{') || text.startsWith('[')) {
+      let plan;
+      try {
         const parsed = JSON.parse(text);
         plan = Array.isArray(parsed) ? parsed : [parsed];
-      } else {
-        const scene = await this.bridge.run({ cmd: 'scene' }).then((r) => r.result);
-        const res = parseInstruction(text, scene);
-        if (res.error) { log(res.error, 'err'); return; }
-        plan = res.plan;
+      } catch (err) {
+        log(`JSON 解析失败：${err.message}`, 'err');
+        return;
       }
-    } catch (err) {
-      log(`解析失败：${err.message}`, 'err');
+      await this._runPlanWithLog(plan, log);
       return;
     }
+
+    // 大模型模式
+    if (this.llmConfig && this.llmConfig.mode === 'llm') {
+      await this._aiRunLLM(text, log);
+      return;
+    }
+
+    // 本地确定性解析
+    const scene = await this.bridge.run({ cmd: 'scene' }).then((r) => r.result);
+    const res = parseInstruction(text, scene);
+    if (res.error) { log(res.error, 'err'); return; }
+    await this._runPlanWithLog(res.plan, log);
+  }
+
+  /** 大模型模式：流式调用 LLM → 提取命令计划 → 逐条执行（每条即时刷新视图=实时预览） */
+  async _aiRunLLM(text, log) {
+    const cfg = this.llmConfig;
+    if (!cfg.apiUrl) {
+      log('未配置大模型 API URL，请点「配置…」填写', 'err');
+      return;
+    }
+    const thinkEl = document.getElementById('ai-think');
+    thinkEl.classList.remove('hidden');
+    thinkEl.textContent = '';
+    log(`调用大模型 ${cfg.model || ''}…`, 'info');
+
+    const scene = await this.bridge.run({ cmd: 'scene' }).then((r) => r.result);
+    const messages = buildPlanMessages(scene, COMMAND_DOCS, text);
+
+    let full = '';
+    try {
+      full = await callLLM(cfg, messages, {
+        onToken: (t) => {
+          thinkEl.textContent += t;
+          thinkEl.scrollTop = thinkEl.scrollHeight;
+        },
+      });
+    } catch (err) {
+      log(`大模型调用失败：${err && err.message}`, 'err');
+      return;
+    }
+
+    log(`大模型返回 ${full.length} 字符，解析命令计划…`, 'info');
+    const { plan, error } = extractPlanFromResponse(full);
+    if (error) {
+      log(`解析失败：${error}`, 'err');
+      return;
+    }
+    if (!plan.length) {
+      log('大模型返回空计划', 'err');
+      return;
+    }
+    log(`解析到 ${plan.length} 条命令，开始执行…`, 'info');
+    await this._runPlanWithLog(plan, log);
+  }
+
+  /** 逐条执行命令计划，每条结果写入日志；每条执行后视图即时刷新（实时预览） */
+  async _runPlanWithLog(plan, log) {
     for (const cmd of plan) {
       const out = await this.bridge.run(cmd);
       if (out.ok) {
@@ -777,6 +913,18 @@ class App {
     setStatus(`正在解析 ${files.length} 个文件…`, 'busy');
     document.getElementById('dropzone').classList.add('hidden');
 
+    // 超大文件提示：3MF 需整文件读入内存解压，数百 MB 时内存峰值较高
+    const LARGE = 200 * 1024 * 1024;
+    for (const file of files) {
+      if (file.size > LARGE) {
+        toast(
+          `${file.name} 较大（约 ${(file.size / 1048576).toFixed(0)}MB），解析时可能占用较多内存，请耐心等待`,
+          'warn',
+          4000,
+        );
+      }
+    }
+
     if (append) {
       this.pushHistory();
     } else {
@@ -800,6 +948,8 @@ class App {
     }
 
     if (!ok) {
+      // append 且全部解析失败：状态没变，回滚刚压入的快照，否则下一次 undo 无效果
+      if (append && this.history.undoStack.length) this.history.undoStack.pop();
       setStatus('解析失败', 'error');
       if (this.project.isEmpty) document.getElementById('dropzone').classList.remove('hidden');
       return;
@@ -987,7 +1137,8 @@ class App {
       });
       menu.append(row);
     }
-    menu.style.display = '';
+    // 注意必须显式 'block'：置 '' 会回落到 CSS 的 display:none，菜单永远弹不出来
+    menu.style.display = 'block';
     // 避免溢出视口
     const mw = menu.offsetWidth || 180;
     const mh = menu.offsetHeight || items.length * 30;
@@ -1249,13 +1400,22 @@ class App {
    *  - 选中多个对象（Shift 多选）→ 合并成一个单一几何对象
    *  - 选中单对象且含多个零件 → 合并其零件（与拆件对称）
    */
-  mergeSelected() {
+  async mergeSelected() {
     const objs = [...this.selectedSet];
     if (objs.length >= 2) {
       this.pushHistory();
-      const merged = mergeObjects(objs, SceneObject, ScenePart);
-      for (const o of objs) this.project.removeObject(o);
-      this.selectedSet.clear();
+      let merged;
+      try {
+        merged = await this._withBusy('合并对象', () => {
+          const m = mergeObjects(objs, SceneObject, ScenePart);
+          for (const o of objs) this.project.removeObject(o);
+          this.selectedSet.clear();
+          return m;
+        });
+      } catch (err) {
+        this._opFailed(err, '合并对象', true);
+        return;
+      }
       this.project.addObject(merged);
       this.viewer.modelRoot.add(merged.group);
       this.select(merged, null);
@@ -1273,8 +1433,17 @@ class App {
       return;
     }
     this.pushHistory();
-    const merged = collapseObject(obj);
-    this.project.removeObject(obj);
+    let merged;
+    try {
+      merged = await this._withBusy('合并零件', () => {
+        const m = collapseObject(obj);
+        this.project.removeObject(obj);
+        return m;
+      });
+    } catch (err) {
+      this._opFailed(err, '合并零件', true);
+      return;
+    }
     this.project.addObject(merged);
     this.viewer.modelRoot.add(merged.group);
     this.select(merged, null);
@@ -1283,7 +1452,7 @@ class App {
   }
 
   /** 为选中（或所有）对象自动生成底座 / 支撑 */
-  autoBase() {
+  async autoBase() {
     const targets = [...this.selectedSet];
     const objs = targets.length ? targets : this.project.activeObjects().slice();
     if (!objs.length) {
@@ -1291,24 +1460,76 @@ class App {
       return;
     }
     this.pushHistory();
-    this._historyLock = true;
-    let made = 0;
+    let made;
     try {
-      for (const o of objs) {
-        const base = buildAutoBase(o, ScenePart, SceneObject);
-        this.project.addObject(base);
-        this.viewer.modelRoot.add(base.group);
-        made++;
-      }
-    } finally {
-      this._historyLock = false;
+      made = await this._withBusy('生成底座', () => {
+        let n = 0;
+        this._historyLock = true;
+        try {
+          for (const o of objs) {
+            const base = buildAutoBase(o, ScenePart, SceneObject);
+            this.project.addObject(base);
+            this.viewer.modelRoot.add(base.group);
+            n++;
+          }
+        } finally {
+          this._historyLock = false;
+        }
+        return n;
+      });
+    } catch (err) {
+      // 逐对象循环可能部分完成，保留快照让用户能撤销已生成的部分
+      this._opFailed(err, '生成底座');
+      this.refreshAll();
+      return;
     }
     this.refreshAll();
     toast(`已为 ${made} 个对象生成底座${targets.length ? '' : '（当前全部）'}`, 'ok');
   }
 
+  /** 显示/隐藏「处理中」遮罩（重型同步运算前，避免用户误以为崩溃） */
+  _showBusy(on, label = '处理中') {
+    if (!this._busyEl) {
+      const el = document.createElement('div');
+      el.id = 'busy-overlay';
+      el.innerHTML = '<div class="busy-box"><div class="spinner"></div><span class="busy-label"></span></div>';
+      document.body.appendChild(el);
+      this._busyEl = el;
+    }
+    this._busyEl.querySelector('.busy-label').textContent = label;
+    this._busyEl.classList.toggle('hidden', !on);
+  }
+
+  /** 让出一帧绘制遮罩后，再执行同步重型计算 */
+  async _withBusy(label, work) {
+    setStatus(`正在${label}…`, 'busy');
+    this._showBusy(true, label);
+    // 等两帧，确保遮罩先绘制出来再阻塞主线程。
+    // 窗口最小化/后台时 rAF 停止调度，用 120ms 超时兜底，避免 AI 远程驱动时永久挂起。
+    await Promise.race([
+      new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))),
+      new Promise((r) => setTimeout(r, 120)),
+    ]);
+    try {
+      return work();
+    } finally {
+      this._showBusy(false);
+      setStatus('就绪', 'ok');
+    }
+  }
+
+  /**
+   * 重型运算失败的统一反馈：toast 报错（而不是无声 unhandled rejection）。
+   * rollback=true 时回滚刚压入的空快照（仅限「先计算、成功后才改状态」的全有或全无操作）。
+   */
+  _opFailed(err, label, rollback = false) {
+    if (rollback) this.history.undoStack.pop();
+    console.error(`[op] ${label}失败:`, err);
+    toast(`${label}失败：${err?.message || err}`, 'err', 5000);
+  }
+
   /** 网格修复：对选中对象（无选中则当前热床全部）做焊接 / 封洞 / 剔除退化 */
-  repairSelected() {
+  async repairSelected() {
     const list = [...this.selectedSet];
     const objs = list.length ? list : this.project.activeObjects();
     if (!objs.length) {
@@ -1316,19 +1537,31 @@ class App {
       return;
     }
     this.pushHistory();
-    this._historyLock = true;
-    const total = { removedDegenerate: 0, weldedVertices: 0, filledHoles: 0 };
+    let total;
     try {
-      for (const o of objs) {
-        for (const p of o.parts) {
-          const rep = repairPart(p);
-          total.removedDegenerate += rep.removedDegenerate;
-          total.weldedVertices += rep.weldedVertices;
-          total.filledHoles += rep.filledHoles;
+      total = await this._withBusy('修复网格', () => {
+        const t = { removedDegenerate: 0, weldedVertices: 0, filledHoles: 0 };
+        this._historyLock = true;
+        try {
+          for (const o of objs) {
+            for (const p of o.parts) {
+              const rep = repairPart(p);
+              t.removedDegenerate += rep.removedDegenerate;
+              t.weldedVertices += rep.weldedVertices;
+              t.filledHoles += rep.filledHoles;
+            }
+          }
+        } finally {
+          this._historyLock = false;
         }
-      }
-    } finally {
-      this._historyLock = false;
+        return t;
+      });
+    } catch (err) {
+      // 部分零件可能已修复，保留快照让用户能撤销
+      this._opFailed(err, '修复网格');
+      this.syncClip();
+      this.refreshAll();
+      return;
     }
     this.syncClip();
     this.refreshAll();
@@ -1339,7 +1572,7 @@ class App {
   }
 
   /** 布尔运算：需恰好选中 2 个对象（selectedSet 中 A 在前、B 在后） */
-  booleanSelected(op) {
+  async booleanSelected(op) {
     const objs = [...this.selectedSet];
     if (objs.length !== 2) {
       toast('布尔运算需恰好选中 2 个对象（A 在前、B 在后，差集为 A−B）', 'err', 4500);
@@ -1348,18 +1581,26 @@ class App {
     const [a, b] = objs;
     const label = op === 'union' ? '并集' : op === 'intersection' ? '交集' : '差集';
     this.pushHistory();
-    this._historyLock = true;
     let result;
     try {
-      result = booleanObjects(a, b, op, SceneObject, ScenePart);
-      this.project.removeObject(a);
-      this.project.removeObject(b);
-      this.selectedSet.clear();
-      this.project.addObject(result);
-      this.viewer.modelRoot.add(result.group);
-      this.select(result, null);
-    } finally {
-      this._historyLock = false;
+      result = await this._withBusy(`布尔${label}`, () => {
+        this._historyLock = true;
+        try {
+          const r = booleanObjects(a, b, op, SceneObject, ScenePart);
+          this.project.removeObject(a);
+          this.project.removeObject(b);
+          this.selectedSet.clear();
+          this.project.addObject(r);
+          this.viewer.modelRoot.add(r.group);
+          this.select(r, null);
+          return r;
+        } finally {
+          this._historyLock = false;
+        }
+      });
+    } catch (err) {
+      this._opFailed(err, `布尔${label}`, true);
+      return;
     }
     this.syncClip();
     this.refreshAll();
@@ -1427,14 +1668,17 @@ class App {
       toast('请先选中要复制的对象', 'err');
       return;
     }
-    let target = this.project.plates.find((p) => p.id !== this.project.activePlate);
-    if (!target) {
-      this.addPlate();
-      target = this.project.plates[this.project.plates.length - 1];
-    }
+    // 单次历史：快照取「建盘 + 复制」之前的状态，一次 undo 即可全部回退
+    // （此前 addPlate 内部还会再 push 一次，需要 undo 两次才能完全回退）
     this.pushHistory();
     this._historyLock = true;
+    let target;
     try {
+      target = this.project.plates.find((p) => p.id !== this.project.activePlate);
+      if (!target) {
+        this.addPlate(); // _historyLock 生效，内部的 pushHistory 被跳过
+        target = this.project.plates[this.project.plates.length - 1];
+      }
       for (const o of objs) {
         const copy = cloneSceneObject(o, ScenePart, SceneObject);
         copy.plateId = target.id;
@@ -1609,13 +1853,13 @@ class App {
   }
 
   // ==================== 拆件（拆分 / 切割） ====================
-  splitSelected(grid, addBase, opts) {
+  async splitSelected(grid, addBase, opts) {
     const obj = this.selection.object;
     if (!obj) {
       toast('请先选中一个对象', 'err');
       return;
     }
-    const { objects, changed } = splitShells(obj, opts);
+    const { objects, changed } = await this._withBusy('拆分连通体', () => splitShells(obj, opts));
     if (!changed) {
       toast('该对象是单一连通体，无需拆分', 'info', 2500);
       return;
@@ -1625,13 +1869,13 @@ class App {
     toast(`已拆分为 ${objects.length} 个独立对象${addBase ? '（含底座）' : ''}`, 'ok');
   }
 
-  cutSelected(axis, dist, cap, grid, addBase) {
+  async cutSelected(axis, dist, cap, grid, addBase) {
     const obj = this.selection.object;
     if (!obj) {
       toast('请先选中一个对象', 'err');
       return;
     }
-    const { objects, changed } = cutObject(obj, axis, dist, cap);
+    const { objects, changed } = await this._withBusy('平面切割', () => cutObject(obj, axis, dist, cap));
     if (!changed) {
       toast('切割平面未穿过模型，请调整位置', 'info', 2500);
       return;
@@ -1841,15 +2085,16 @@ class App {
     const stem = (base?.name || 'project').replace(/\.3mf$/i, '');
     const buf = new Uint8Array(await blob.arrayBuffer());
     let binary = '';
-    for (let i = 0; i < buf.length; i++) binary += String.fromCharCode(buf[i]);
+    const CHUNK = 0x8000;
+    for (let i = 0; i < buf.length; i += CHUNK) {
+      binary += String.fromCharCode.apply(null, buf.subarray(i, i + CHUNK));
+    }
     return { base64: btoa(binary), name: `${stem}_edited.3mf` };
   }
 
   /** 从 base64 导入 3MF（供 AI 桥使用） */
   async import3mfBuffer(base64, name = 'imported.3mf') {
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
     const file = new File([bytes], name);
     await this.loadFiles([file], !this.project.isEmpty);
   }

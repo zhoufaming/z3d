@@ -150,21 +150,36 @@ export function scanInt(s, pos, end) {
 export function readAttr(s, name, from, to) {
   const limit = to === undefined ? s.length : to;
   const needle = name + '="';
-  // 关键：把搜索限定在 [from, to) 内。indexOf(needle, from) 会一直扫到串尾，
-  // 对不存在的属性（绝大多数三角形没有 paint_color/pid/p1）每次都全串扫描 -> O(n²)。
-  // 这里先截取 [from, to) 再查找，避免超大 XML 上的灾难性退化。
+  // 关键：把搜索限定在 [from, to) 内，且不产生子串分配。
+  // indexOf(needle, from) 会一直扫到串尾，对不存在的属性（绝大多数三角形没有
+  // paint_color/pid/p1）每次都全串扫描 -> O(n²)；slice(from,to) 又会为每顶点/三角分配子串。
+  // 这里用不分配的原地扫描，避免超大 XML 上的灾难性退化与内存碎片。
   let idx;
   if (to === undefined) {
     idx = s.indexOf(needle, from);
   } else {
-    const rel = s.slice(from, to).indexOf(needle);
-    idx = rel === -1 ? -1 : rel + from;
+    idx = indexOfWithin(s, needle, from, limit);
   }
   if (idx === -1 || idx >= limit) return null;
   const start = idx + needle.length;
   const endQuote = s.indexOf('"', start);
   if (endQuote === -1 || endQuote > limit) return null;
   return s.slice(start, endQuote);
+}
+
+/** 在 [from, to) 内原地查找子串，不产生子串分配 */
+function indexOfWithin(s, needle, from, to) {
+  const nl = needle.length;
+  const last = to - nl;
+  if (last < from) return -1;
+  for (let i = from; i <= last; i++) {
+    let k = 0;
+    for (; k < nl; k++) {
+      if (s.charCodeAt(i + k) !== needle.charCodeAt(k)) break;
+    }
+    if (k === nl) return i;
+  }
+  return -1;
 }
 
 /** XML 文本反转义 */

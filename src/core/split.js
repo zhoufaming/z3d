@@ -16,6 +16,7 @@
 import * as THREE from 'three';
 import earcut from 'earcut';
 import { SceneObject, ScenePart } from './project.js';
+import { WELD_TOLERANCE } from './constants.js';
 
 /** 收集对象所有可见 part 的世界坐标三角形（已应用 mesh.matrixWorld）。 */
 export function collectWorldTriangles(object) {
@@ -49,7 +50,7 @@ function firstExtruder(object) {
 }
 
 /** 由一组世界坐标三角形（[v0,v1,v2]）生成非索引 BufferGeometry */
-function geometryFromTris(tris, side = THREE.FrontSide) {
+function geometryFromTris(tris) {
   const positions = [];
   for (const t of tris) for (const v of t) positions.push(v.x, v.y, v.z);
   const geo = new THREE.BufferGeometry();
@@ -60,7 +61,7 @@ function geometryFromTris(tris, side = THREE.FrontSide) {
 }
 
 function makeObject(name, tris, extruder) {
-  const geo = geometryFromTris(tris, THREE.DoubleSide);
+  const geo = geometryFromTris(tris);
   const part = new ScenePart({
     name: 'part',
     geometry: geo,
@@ -197,7 +198,7 @@ export function triVolume(tris) {
  * 交点 weld 后度数应为 2，沿边邻接走一圈即得闭环比。
  * @returns {Array<Array<THREE.Vector3>>} 每个元素是一条首尾不重复的环
  */
-export function buildRings(segments, tol = 1e-3) {
+export function buildRings(segments, tol = WELD_TOLERANCE) {
   const weld = new Map();
   let next = 0;
   const keyOf = (p) => `${Math.round(p.x / tol)},${Math.round(p.y / tol)},${Math.round(p.z / tol)}`;

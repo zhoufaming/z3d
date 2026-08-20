@@ -181,8 +181,10 @@ export async function writeThreeMF(project, opts = {}) {
   for (const entry of plan) {
     entry.obj.group.updateMatrix();
     const t = serialize3mfTransform(entry.obj.group.matrix.elements, fmtCoord);
+    // p:plate 标记对象归属热床（Bambu Studio 按 build item 上的该属性分盘展示）
+    const plateAttr = Number.isFinite(entry.obj.plateId) ? ` p:plate="${entry.obj.plateId}"` : '';
     mw.push(
-      `  <item objectid="${entry.containerId}" p:UUID="${uuid()}" transform="${t}" printable="${entry.obj.printable ? 1 : 0}"/>\n`,
+      `  <item objectid="${entry.containerId}" p:UUID="${uuid()}" transform="${t}" printable="${entry.obj.printable ? 1 : 0}"${plateAttr}/>\n`,
     );
   }
   mw.push(' </build>\n</model>\n');
@@ -220,6 +222,12 @@ export async function writeThreeMF(project, opts = {}) {
       json.filament_colour = colours;
       if (json.filament_type) json.filament_type = types;
     }
+    // 切换打印机预设后 project.bed 可能与基底文档不同，导出时以当前床尺寸为准
+    const { width, depth, height } = project.bed;
+    if (Number.isFinite(width) && width > 0 && Number.isFinite(depth) && depth > 0) {
+      json.printable_area = [`0x0`, `${width}x0`, `${width}x${depth}`, `0x${depth}`];
+    }
+    if (Number.isFinite(height) && height > 0) json.printable_height = String(height);
     archive.setText('Metadata/project_settings.config', JSON.stringify(json, null, 4));
   } else if (project.filaments.length) {
     // 纯新建（没有导入任何文件）时，基底归档是空的，需要自己造一份
@@ -281,25 +289,42 @@ function buildModelSettings(project, plan, baseDoc) {
     cfg.objects.push(objNode);
   }
 
-  // 盘面：沿用基底文档第一个 plate 的设置，实例列表按当前对象重建
+  // 盘面：按对象归属热床分组，每盘一个 <plate>（plater_id = 实际盘号）。
+  // 之前全部塞进盘 1 会让多盘工程的盘信息丢失。
   const basePlate = baseDoc?.settings.plates?.[0];
-  const plateMeta = basePlate
-    ? basePlate.metadata.map((m) => ({ ...m }))
-    : [
-        { key: 'plater_id', value: '1' },
-        { key: 'plater_name', value: '' },
-        { key: 'locked', value: 'false' },
-      ];
-  setMeta(plateMeta, 'plater_id', '1');
+  const makePlateMeta = (plateId) => {
+    const meta = basePlate
+      ? basePlate.metadata.map((m) => ({ ...m }))
+      : [
+          { key: 'plater_id', value: '1' },
+          { key: 'plater_name', value: '' },
+          { key: 'locked', value: 'false' },
+        ];
+    setMeta(meta, 'plater_id', String(plateId));
+    return meta;
+  };
 
-  const instances = plan.map((entry, i) => ({
-    metadata: [
-      { key: 'object_id', value: String(entry.containerId) },
-      { key: 'instance_id', value: '0' },
-      { key: 'identify_id', value: String(100 + i * 2) },
-    ],
-  }));
-  cfg.plates.push({ metadata: plateMeta, instances });
+  const byPlate = new Map();
+  for (const entry of plan) {
+    const pid = Number.isFinite(entry.obj.plateId)
+      ? entry.obj.plateId
+      : (Number.isFinite(project.activePlate) ? project.activePlate : 1);
+    if (!byPlate.has(pid)) byPlate.set(pid, []);
+    byPlate.get(pid).push(entry);
+  }
+  let identifySeq = 100;
+  for (const [pid, entries] of [...byPlate.entries()].sort((a, b) => a[0] - b[0])) {
+    cfg.plates.push({
+      metadata: makePlateMeta(pid),
+      instances: entries.map((entry) => ({
+        metadata: [
+          { key: 'object_id', value: String(entry.containerId) },
+          { key: 'instance_id', value: '0' },
+          { key: 'identify_id', value: String((identifySeq += 2)) },
+        ],
+      })),
+    });
+  }
 
   cfg.assemble = plan.map((entry) => {
     entry.obj.group.updateMatrix();

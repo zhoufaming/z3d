@@ -76,6 +76,8 @@ export function numberInput(value, onCommit, opts = {}) {
       commit();
       input.blur();
     } else if (e.key === 'Escape') {
+      // 先恢复原值再 blur，避免 blur→commit 把误改的值提交进历史
+      input.value = fmt(value, opts.digits ?? 2);
       input.blur();
     } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
       // 方向键微调：默认 1，Shift 加速到 10，Alt 精调到 0.1

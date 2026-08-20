@@ -65,7 +65,7 @@ export class CommandBridge {
         const b = o.computeBox(new THREE.Box3());
         const size = b.getSize(new THREE.Vector3());
         return {
-          id: o.id,
+          uid: o.uid,
           name: o.name,
           plateId: o.plateId,
           visible: o.userVisible !== false,
@@ -83,15 +83,15 @@ export class CommandBridge {
   }
 
   // ---------------------------------------------------------------- 选择解析
-  /** 按名字（子串）/ 序号解析对象，保持输入顺序 */
+  /** 按 uid（"u1" / 1）/ 名字（子串）解析对象，保持输入顺序 */
   _resolve(names) {
     const list = this.app.project.objects;
     const out = [];
     for (const n of names) {
-      let o = null;
-      if (typeof n === 'number') o = list.find((x) => x.id === n);
-      else {
-        const s = String(n);
+      const s = String(n);
+      // uid 是 "u1"、"u2"… 字符串；同时接受数字 1 和字符串 "u1" 两种输入
+      let o = list.find((x) => x.uid === s || x.uid === `u${s}`);
+      if (!o && typeof n !== 'number') {
         o = list.find((x) => x.name === s) || list.find((x) => x.name.includes(s));
       }
       if (o) out.push(o);
@@ -122,7 +122,7 @@ export class CommandBridge {
       obj.name = args.name;
       if (this.app.tree) this.app.tree.render();
     }
-    return { created: obj?.name, id: obj?.id };
+    return { created: obj?.name, uid: obj?.uid };
   }
 
   cmdDelete(args) {
@@ -257,7 +257,8 @@ export class CommandBridge {
   async cmdExport3mf(args) {
     const { base64, name } = await this.app.export3mfBuffer();
     if (args.path && this.fs) {
-      await this.fs.writeFile(args.path, base64);
+      const r = await this.fs.writeFile(args.path, base64);
+      if (r && r.ok === false) throw new Error(r.error || '写入文件失败');
       return { path: args.path, name, bytes: Math.round((base64.length * 3) / 4) };
     }
     return { name, base64, note: '未提供 fsAdapter 或 path，仅返回 base64' };
@@ -265,7 +266,12 @@ export class CommandBridge {
 
   async cmdImport3mf(args) {
     let base64 = args.base64;
-    if (!base64 && args.path && this.fs) base64 = await this.fs.readFile(args.path);
+    if (!base64 && args.path && this.fs) {
+      const r = await this.fs.readFile(args.path);
+      if (r && r.ok === false) throw new Error(r.error || '读取文件失败');
+      // adapter 返回 {ok, base64} 包装；也兼容直接返回裸 base64 字符串的实现
+      base64 = typeof r === 'string' ? r : r?.base64;
+    }
     if (!base64) throw new Error('import3mf 需要 base64 或（带 fsAdapter 的）path');
     const name = args.name || 'imported.3mf';
     await this.app.import3mfBuffer(base64, name);
