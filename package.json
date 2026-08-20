@@ -12,14 +12,43 @@
     "sample": "node tools/make-sample.mjs",
     "test": "node tools/make-sample.mjs && node tools/test-roundtrip.mjs",
     "electron": "node electron/launch.cjs .",
-    "electron:build": "vite build && node electron/launch.cjs ."
+    "electron:build": "vite build && node electron/launch.cjs .",
+    "pack": "npm run build && electron-builder --dir",
+    "dist:win": "npm run build && electron-builder --win nsis"
   },
   "dependencies": {
+    "earcut": "^2.2.4",
     "fflate": "^0.8.2",
-    "three": "^0.170.0"
+    "three": "^0.170.0",
+    "three-bvh-csg": "^0.0.16"
   },
   "devDependencies": {
-    "vite": "^5.4.11",
-    "electron": "^31.0.0"
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3",
+    "vite": "^5.4.11"
+  },
+  "build": {
+    "appId": "com.bambu.threemf.studio",
+    "productName": "Bambu 3MF Studio",
+    "copyright": "Copyright © 2026",
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": "nsis",
+      "artifactName": "${productName}-${version}-setup.${ext}",
+      "icon": "electron/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "Bambu 3MF Studio"
+    }
   }
 }

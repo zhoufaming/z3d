@@ -150,7 +150,16 @@ export function scanInt(s, pos, end) {
 export function readAttr(s, name, from, to) {
   const limit = to === undefined ? s.length : to;
   const needle = name + '="';
-  const idx = s.indexOf(needle, from);
+  // 关键：把搜索限定在 [from, to) 内。indexOf(needle, from) 会一直扫到串尾，
+  // 对不存在的属性（绝大多数三角形没有 paint_color/pid/p1）每次都全串扫描 -> O(n²)。
+  // 这里先截取 [from, to) 再查找，避免超大 XML 上的灾难性退化。
+  let idx;
+  if (to === undefined) {
+    idx = s.indexOf(needle, from);
+  } else {
+    const rel = s.slice(from, to).indexOf(needle);
+    idx = rel === -1 ? -1 : rel + from;
+  }
   if (idx === -1 || idx >= limit) return null;
   const start = idx + needle.length;
   const endQuote = s.indexOf('"', start);

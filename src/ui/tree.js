@@ -45,7 +45,7 @@ export class ObjectTree {
       }
 
       for (const obj of objects) {
-        const isSel = selection.object === obj;
+        const isSel = this.app.selectedSet.has(obj);
         const expanded = this.expanded.has(obj.uid);
         const multiPart = obj.parts.length > 1;
 
@@ -56,7 +56,8 @@ export class ObjectTree {
             title: obj.name,
             onclick: (e) => {
               if (e.target.classList.contains('eye')) return;
-              this.app.select(obj, null);
+              if (e.shiftKey) this.app.selectToggle(obj);
+              else this.app.select(obj, null);
             },
             ondblclick: () => this.app.focusObject(obj),
           },
@@ -73,7 +74,8 @@ export class ObjectTree {
               text: obj.group.visible ? '●' : '○',
               onclick: (e) => {
                 e.stopPropagation();
-                obj.group.visible = !obj.group.visible;
+                obj.userVisible = !obj.userVisible;
+                this.app.project.applyPlateVisibility();
                 this.app.viewer.requestRender();
                 this.render();
               },
@@ -81,14 +83,14 @@ export class ObjectTree {
           ],
         );
 
-        if (multiPart) {
-          row.addEventListener('contextmenu', (e) => {
-            e.preventDefault();
-            if (expanded) this.expanded.delete(obj.uid);
-            else this.expanded.add(obj.uid);
-            this.render();
-          });
-        }
+        row.addEventListener('contextmenu', (e) => {
+          e.preventDefault();
+          if (!this.app.selectedSet.has(obj)) {
+            if (e.shiftKey) this.app.selectToggle(obj);
+            else this.app.select(obj, null);
+          }
+          this.app.showContextMenu(e.clientX, e.clientY, this.app.objectContextItems());
+        });
         root.append(row);
 
         if (multiPart && expanded) {

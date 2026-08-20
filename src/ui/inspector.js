@@ -24,6 +24,12 @@ export class Inspector {
     const root = clear(this.container);
     this.inputs = null;
     const { object, part } = this.app.selection;
+    const selCount = this.app.selectedSet.size;
+
+    if (selCount > 1) {
+      root.append(this.sectionMulti(selCount));
+      return;
+    }
 
     if (!object) {
       root.append(
@@ -73,6 +79,28 @@ export class Inspector {
           },
         }),
         '参与打印',
+      ]),
+    ]);
+  }
+
+  // ---------- 多选摘要 ----------
+  sectionMulti(count) {
+    const app = this.app;
+    let tris = 0;
+    let parts = 0;
+    for (const o of app.selectedSet) {
+      tris += o.triangleCount;
+      parts += o.parts.length;
+    }
+    return el('div', { class: 'insp-section' }, [
+      el('div', { class: 'insp-title' }, `已选中 ${count} 个对象`),
+      el('div', { class: 'kv' }, [el('span', { class: 'k', text: '零件数' }), el('span', { class: 'v', text: String(parts) })]),
+      el('div', { class: 'kv' }, [el('span', { class: 'k', text: '三角面' }), el('span', { class: 'v', text: tris.toLocaleString('en-US') })]),
+      el('div', { class: 'hint' }, '可一键合并为单一对象，或批量生成底座 / 删除。'),
+      el('div', { class: 'row-actions' }, [
+        el('button', { class: 'btn', text: '合并', onclick: () => app.mergeSelected() }),
+        el('button', { class: 'btn', text: '底座', onclick: () => app.autoBase() }),
+        el('button', { class: 'btn danger', text: '删除', onclick: () => app.deleteSelected() }),
       ]),
     ]);
   }

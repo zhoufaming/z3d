@@ -279,9 +279,11 @@ export function parseModelXml(xml) {
         const it = xml.indexOf('<item', i);
         if (it === -1 || it >= stop) break;
         const ic = xml.indexOf('>', it);
+        const plateRaw = readAttr(xml, 'p:plate', it, ic) || readAttr(xml, 'plate', it, ic);
         result.build.push({
           objectid: readAttr(xml, 'objectid', it, ic),
           uuid: readAttr(xml, 'p:UUID', it, ic),
+          plate: plateRaw != null ? Number(plateRaw) : null,
           transform: parse3mfTransform(readAttr(xml, 'transform', it, ic)),
           printable: readAttr(xml, 'printable', it, ic) !== '0',
         });

@@ -37,9 +37,12 @@ if (process.env.BAMBU_ELECTRON_DISABLE_GPU === '1') {
   safeFlags.push('--disable-gpu');
 }
 
+const childEnv = { ...process.env };
+delete childEnv.ELECTRON_RUN_AS_NODE;
+
 const child = spawn(exe, [...safeFlags, ...(args.length ? args : ['.'])], {
   stdio: 'inherit',
-  env: process.env,
+  env: childEnv,
 });
 
 child.on('exit', (code) => process.exit(code === null ? 0 : code));

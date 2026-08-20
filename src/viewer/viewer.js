@@ -25,6 +25,10 @@ export class Viewer {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // 阴影按需刷新：只在场景结构变化（载入/编辑/切换盘）时重算一次，
+    // 旋转/平移相机时不重算，避免百万面模型每帧把阴影通道跑两遍导致卡顿。
+    this.renderer.shadowMap.autoUpdate = false;
+    this.renderer.shadowMap.needsUpdate = true;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.0;
 
@@ -71,17 +75,15 @@ export class Viewer {
     this.transformHelper = gizmo;
     gizmo.visible = false;
 
-    // 选中高亮外框
-    this.selectionBox = new THREE.Box3Helper(new THREE.Box3(), 0x2f80ff);
-    this.selectionBox.visible = false;
-    this.selectionBox.material.depthTest = false;
-    this.selectionBox.material.transparent = true;
-    this.scene.add(this.selectionBox);
+    // 选中高亮外框（可同时显示多个对象）
+    this.selectionGroup = new THREE.Group();
+    this.scene.add(this.selectionGroup);
 
     this.raycaster = new THREE.Raycaster();
     this.pointer = new THREE.Vector2();
     this._needsRender = true;
     this._running = true;
+    this.clipPlane = null; // THREE.Plane | null
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(canvas.parentElement);
@@ -151,6 +153,28 @@ export class Viewer {
     this.scene.add(this.keyLight.target);
 
     this.controls.update();
+    this.markShadowsDirty();
+    this.requestRender();
+  }
+
+  /**
+   * 把热床移动到指定包围盒下方并跟随光源，用于多盘文件切换时
+   * 让每个热床的对象都显示在自己的床上。
+   */
+  positionPlateUnder(box) {
+    if (!this.plate || !box || box.isEmpty()) return;
+    const { width, depth } = this.plate.userData.bed;
+    const center = box.getCenter(new THREE.Vector3());
+    const bx = center.x - width / 2;
+    const by = center.y - depth / 2;
+    this.plate.position.set(bx, by, 0);
+
+    // 主光源跟随热床，保证阴影覆盖当前热床区域
+    this.keyLight.position.set(bx + width / 2 + 260, by + depth / 2 - 340, 520);
+    this.keyLight.target.position.set(bx + width / 2, by + depth / 2, 0);
+    this.keyLight.target.updateMatrixWorld();
+
+    this.markShadowsDirty();
     this.requestRender();
   }
 
@@ -190,13 +214,37 @@ export class Viewer {
     this.requestRender();
   }
 
-  showSelectionBox(box) {
-    if (!box || box.isEmpty()) {
-      this.selectionBox.visible = false;
-    } else {
-      this.selectionBox.box.copy(box);
-      this.selectionBox.visible = true;
+  /** 显示一组选中外框（每个对象一个）。boxes: THREE.Box3[] */
+  showSelectionBoxes(boxes) {
+    const pool = this.selectionGroup;
+    while (pool.children.length > 0) {
+      const h = pool.children.pop();
+      h.geometry?.dispose();
+      h.material?.dispose();
+      pool.remove(h);
     }
+    for (const b of boxes) {
+      if (!b || b.isEmpty()) continue;
+      const helper = new THREE.Box3Helper(b.clone(), 0x2f80ff);
+      helper.material.depthTest = false;
+      helper.material.transparent = true;
+      pool.add(helper);
+    }
+    this.requestRender();
+  }
+
+  /** 设置 / 清除剖面裁剪平面（THREE.Plane | null）。裁剪只作用于模型网格，不影响热床与选框 */
+  setClipPlane(plane) {
+    this.clipPlane = plane;
+    this.renderer.localClippingEnabled = !!plane;
+    const clips = plane ? [plane] : null;
+    this.modelRoot.traverse((o) => {
+      if (o.isMesh && o.material) {
+        o.material.clippingPlanes = clips;
+        o.material.clipShadows = true;
+        o.material.needsUpdate = true;
+      }
+    });
     this.requestRender();
   }
 
@@ -208,6 +256,17 @@ export class Viewer {
     this.raycaster.setFromCamera(this.pointer, this.camera);
     const hits = this.raycaster.intersectObjects(candidates, true);
     return hits.length ? hits[0] : null;
+  }
+
+  /** 把世界坐标投影到视口像素坐标（相对 canvas/视口左上角），用于 HTML 浮层定位 */
+  worldToScreen(world) {
+    const rect = this.canvas.getBoundingClientRect();
+    const v = world.clone().project(this.camera);
+    return {
+      x: (v.x * 0.5 + 0.5) * rect.width,
+      y: (-v.y * 0.5 + 0.5) * rect.height,
+      visible: v.z > -1 && v.z < 1,
+    };
   }
 
   resize() {
@@ -223,6 +282,11 @@ export class Viewer {
 
   requestRender() {
     this._needsRender = true;
+  }
+
+  /** 标记阴影贴图需要重算（场景几何/变换变化后调用，下一次渲染时执行一次） */
+  markShadowsDirty() {
+    this.renderer.shadowMap.needsUpdate = true;
   }
 
   animate = () => {

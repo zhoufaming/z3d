@@ -81,6 +81,10 @@ export class SceneObject {
     this.name = init.name || 'object';
     this.sourceObjectId = init.sourceObjectId;
     this.printable = init.printable !== false;
+    /** 归属的热床 id；非当前热床的对象在视口隐藏 */
+    this.plateId = init.plateId ?? 0;
+    /** 眼睛图标控制的用户显隐（与热床显隐叠加生效） */
+    this.userVisible = init.userVisible !== false;
     /** @type {ScenePart[]} */
     this.parts = [];
     /** model_settings.config 中对应的 <object> 节点 */
@@ -130,6 +134,9 @@ export class Project {
     this.filaments = [];
     this.bed = { width: 256, depth: 256, height: 256 };
     this.printerPreset = 'auto';
+    /** 多热床：每个对象归属一个热床；视口只显示当前热床的对象 */
+    this.plates = [{ id: 0, name: '热床 1' }];
+    this.activePlate = 0;
     /** 第一个导入的文档作为导出模板 */
     this.baseDocId = null;
     this.listeners = new Set();
@@ -172,6 +179,7 @@ export class Project {
     const docId = `d${this.docs.size + 1}_${Date.now().toString(36)}`;
     doc.id = docId;
     this.docs.set(docId, doc);
+    const firstDoc = !this.baseDocId;
     if (!this.baseDocId) {
       this.baseDocId = docId;
       // 第一个文档决定料槽与热床
@@ -184,8 +192,22 @@ export class Project {
     }
     this.ensureFilaments(Math.max(4, this.filaments.length));
 
+    const settingsObjects = doc.settings?.objects || [];
+    const settingsPlates = doc.settings?.plates || [];
     const settingsById = new Map();
-    for (const o of doc.settings.objects) settingsById.set(String(o.id), o);
+    for (const o of settingsObjects) settingsById.set(String(o.id), o);
+
+    // 多盘映射：Bambu Studio 把盘信息放在 Metadata/model_settings.config 的 <plate> 里，
+    // 每个 <model_instance object_id="N"> 的 object_id 直接对应 3dmodel.model 的 build item objectid
+    const sourceToPlate = new Map();
+    for (const plate of settingsPlates) {
+      const plateId = Number(metaValue(plate.metadata, 'plater_id'));
+      if (!Number.isFinite(plateId)) continue;
+      for (const inst of plate.instances) {
+        const objId = metaValue(inst.metadata, 'object_id');
+        if (objId != null) sourceToPlate.set(String(objId), plateId);
+      }
+    }
 
     const created = [];
     const items = doc.root.build.length
@@ -195,9 +217,29 @@ export class Project {
           .filter((o) => (o.mesh && o.mesh.indices.length) || o.components.length)
           .map((o) => ({ objectid: o.id, transform: null, printable: true }));
 
+    // 首个文档时，根据 p:plate / model_settings.config 的 <plate> 还原多盘结构
+    if (firstDoc) {
+      const plateNums = new Set();
+      for (const it of items) {
+        if (Number.isFinite(it.plate)) plateNums.add(it.plate);
+        const mapped = sourceToPlate.get(String(it.objectid));
+        if (mapped != null) plateNums.add(mapped);
+      }
+      for (const plate of settingsPlates) {
+        const pid = Number(metaValue(plate.metadata, 'plater_id'));
+        if (Number.isFinite(pid)) plateNums.add(pid);
+      }
+      if (plateNums.size > 0) {
+        const nums = [...plateNums].sort((a, b) => a - b);
+        this.plates = nums.map((n) => ({ id: n, name: `热床 ${n}` }));
+        this.activePlate = nums[0];
+      }
+    }
+
     for (const item of items) {
-      const settingsObject = settingsById.get(String(item.objectid)) || null;
-      const rootObj = doc.root.objects.get(String(item.objectid));
+      const sourceId = String(item.objectid);
+      const settingsObject = settingsById.get(sourceId) || null;
+      const rootObj = doc.root.objects.get(sourceId);
       const displayName =
         (settingsObject && metaValue(settingsObject.metadata, 'name')) ||
         rootObj?.name ||
@@ -209,6 +251,9 @@ export class Project {
         sourceObjectId: item.objectid,
         printable: item.printable,
         settingsObject,
+        plateId: Number.isFinite(item.plate)
+          ? item.plate
+          : (sourceToPlate.get(String(item.objectid)) ?? this.activePlate),
       });
 
       if (item.transform) {
@@ -272,9 +317,22 @@ export class Project {
   }
 
   addObject(obj) {
+    if (obj.plateId == null) obj.plateId = this.activePlate;
     this.objects.push(obj);
     this.emit('objectsChanged');
     return obj;
+  }
+
+  /** 当前热床上的对象（视口/选择/导出的操作范围） */
+  activeObjects() {
+    return this.objects.filter((o) => o.plateId === this.activePlate);
+  }
+
+  /** 按用户显隐 + 当前热床统一刷新所有对象的 group.visible */
+  applyPlateVisibility() {
+    for (const o of this.objects) {
+      o.group.visible = o.userVisible !== false && o.plateId === this.activePlate;
+    }
   }
 
   clear() {
@@ -306,11 +364,12 @@ export class Project {
   get stats() {
     let tris = 0;
     let parts = 0;
-    for (const o of this.objects) {
+    const list = this.activeObjects();
+    for (const o of list) {
       tris += o.triangleCount;
       parts += o.parts.length;
     }
-    return { objects: this.objects.length, parts, triangles: tris, docs: this.docs.size };
+    return { objects: list.length, parts, triangles: tris, docs: this.docs.size };
   }
 }
 

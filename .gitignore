@@ -18,6 +18,18 @@ min.log
 *.png
 *.yaml
 
+# 调试脚本与验证输出（本次开发期产物，非功能代码）
+tools/cdp-render.mjs
+tools/e2e-molly.mjs
+tools/repro-molly.mjs
+tools/verify-molly-plates.mjs
+tools/cdp-out/
+tools/e2e-out/
+tools/e2e-out2/
+
+# Vite 临时缓存
+vite.config.js.timestamp-*.mjs
+
 # 样例 3MF（由 make-sample 按需生成，避免二进制差异污染仓库）
 samples/*.3mf
 

@@ -14,10 +14,11 @@
  * 用 .cjs 而非 .js：本项目 package.json 是 "type":"module"，写成 .js 会被当
  * 成 ESM，而 electron 自身是 CJS 包，ESM 加载器对其命名导出预解析会报错。
  */
-const { app, BrowserWindow, Menu, dialog } = require('electron');
+const { app, BrowserWindow, Menu, dialog, ipcMain } = require('electron');
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 
 const DIST = path.join(__dirname, '..', 'dist');
 const PORT = 5188;
@@ -69,6 +70,90 @@ function startStaticServer() {
     server.listen(PORT, '127.0.0.1', () => resolve(server));
   });
 }
+
+// ==================================================================
+// AI 本地控制服务（opt-in，默认关闭）
+// ------------------------------------------------------------------
+// 仅当渲染进程的「AI 辅助」面板被开启时，由渲染进程经 IPC 拉起。
+// 绑定 127.0.0.1，所有请求必须携带开启时生成的一次性 token。
+// 外部 AI 代理 / 脚本通过它 POST 命令 JSON，经渲染进程的
+// window.__bambuBridge.run() 驱动软件修改模型（见 src/core/ai-bridge.js）。
+// ==================================================================
+let aiServer = null;
+let aiToken = null;
+let mainWindow = null;
+
+function sendToBridge(command) {
+  if (!mainWindow) throw new Error('窗口未就绪');
+  // 在渲染进程里调用桥；结果（结构化对象）会跨 IPC 序列化返回。
+  return mainWindow.webContents.executeJavaScript(
+    `window.__bambuBridge.run(${JSON.stringify(command)})`,
+  );
+}
+
+function startAIServer(port, token) {
+  if (aiServer) return;
+  aiToken = token;
+  aiServer = http.createServer((req, res) => {
+    const send = (code, obj) => {
+      res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify(obj));
+    };
+    const url = (req.url || '/').split('?')[0];
+
+    if (req.method === 'GET' && (url === '/health' || url === '/')) {
+      return send(200, { ok: true, service: 'bambu-ai-bridge', endpoints: ['/command (POST)', '/scene (GET)'] });
+    }
+
+    let body = '';
+    req.on('data', (c) => { body += c; if (body.length > 5e6) req.destroy(); });
+    req.on('end', async () => {
+      try {
+        if (req.method === 'GET' && url === '/scene') {
+          const r = await sendToBridge({ cmd: 'scene' });
+          return send(200, r);
+        }
+        if (req.method !== 'POST' || url !== '/command') {
+          return send(404, { ok: false, error: '未知端点' });
+        }
+        let parsed;
+        try { parsed = JSON.parse(body || '{}'); } catch { return send(400, { ok: false, error: 'JSON 解析失败' }); }
+        if (parsed.token !== aiToken) return send(403, { ok: false, error: 'token 无效' });
+        const command = parsed.command;
+        if (!command || typeof command !== 'object' || !command.cmd) {
+          return send(400, { ok: false, error: 'command 必须含 {cmd, args?}' });
+        }
+        const r = await sendToBridge(command);
+        return send(200, r);
+      } catch (err) {
+        return send(500, { ok: false, error: String(err && err.message || err) });
+      }
+    });
+  });
+  aiServer.listen(port, '127.0.0.1', () => {
+    console.log(`[AI] 控制服务已启动 http://127.0.0.1:${port} （token: ${token}）`);
+  });
+}
+
+function stopAIServer() {
+  if (aiServer) {
+    aiServer.close();
+    aiServer = null;
+    aiToken = null;
+    console.log('[AI] 控制服务已关闭');
+  }
+}
+
+ipcMain.handle('ai:enable', (e, { port, token }) => { startAIServer(port, token); return { ok: true, port }; });
+ipcMain.handle('ai:disable', () => { stopAIServer(); return { ok: true }; });
+ipcMain.handle('fs:writeFile', (e, { path: p, base64 }) => {
+  fs.writeFileSync(p, Buffer.from(base64, 'base64'));
+  return { ok: true, path: p };
+});
+ipcMain.handle('fs:readFile', (e, { path: p }) => {
+  const buf = fs.readFileSync(p);
+  return { ok: true, base64: buf.toString('base64') };
+});
 
 function buildMenu(win) {
   const click = (id) =>
@@ -139,21 +224,27 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      preload: path.join(__dirname, 'preload.cjs'),
     },
   });
 
   buildMenu(win);
-  win.loadURL(`http://127.0.0.1:${PORT}/`);
+  // 通过 URL 时间戳强刷 index.html，避免 rebuild 后 Electron 仍加载旧缓存
+  win.loadURL(`http://127.0.0.1:${PORT}/?v=${Date.now()}`);
+  win.webContents.on('console-message', (e, level, message, line, sourceId) => {
+    const prefix = ['verbose', 'info', 'warning', 'error'][level] || level;
+    console.log(`[render][${prefix}] ${message}${sourceId ? ` (${sourceId}:${line})` : ''}`);
+  });
   return win;
 }
 
 let server = null;
 app.whenReady().then(async () => {
   server = await startStaticServer();
-  createWindow();
+  mainWindow = createWindow();
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (BrowserWindow.getAllWindows().length === 0) mainWindow = createWindow();
   });
 });
 
@@ -163,4 +254,5 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   if (server) server.close();
+  stopAIServer();
 });
