@@ -20,6 +20,14 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 
+// 当主进程的 stdout/stderr 被重定向到已关闭的管道时（例如某些启动器/脚本环境），
+// console.log 会抛出 EPIPE 并弹出 "A JavaScript error occurred in the main process"。
+// 该错误与业务逻辑无关，忽略即可避免崩溃。
+function isEPIPE(err) { return err && (err.code === 'EPIPE' || /EPIPE|broken pipe/i.test(err.message)); }
+process.on('uncaughtException', (err) => { if (isEPIPE(err)) return; console.error('[main] uncaughtException:', err); });
+process.on('unhandledRejection', (reason) => { if (isEPIPE(reason)) return; console.error('[main] unhandledRejection:', reason); });
+[process.stdout, process.stderr].forEach((s) => { if (s && s.on) s.on('error', (err) => { if (!isEPIPE(err)) console.error('[main] stream error:', err); }); });
+
 const DIST = path.join(__dirname, '..', 'dist');
 const PORT = 5188;
 
