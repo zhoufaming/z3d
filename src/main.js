@@ -783,8 +783,8 @@ class App {
     // 设置（模式/配置/服务信息）折叠
     settingsBtn && settingsBtn.addEventListener('click', () => settings.classList.toggle('hidden'));
 
-    toggle.addEventListener('change', async () => {
-      if (toggle.checked) {
+    const setAIPanelOpen = async (open) => {
+      if (open) {
         // 生成一个一次性 token，外部 AI 须携带它才能下发命令
         const token = Array.from(crypto.getRandomValues(new Uint8Array(16)))
           .map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -793,6 +793,7 @@ class App {
         statusEl.className = 'ai-on';
         portEl.textContent = String(port);
         tokenEl.textContent = token;
+        toggle.classList.add('active');
         panel && panel.classList.remove('hidden');
         if (window.bambu && window.bambu.invoke) {
           try {
@@ -812,18 +813,20 @@ class App {
         statusEl.className = 'ai-off';
         portEl.textContent = '—';
         tokenEl.textContent = '—';
+        toggle.classList.remove('active');
         panel && panel.classList.add('hidden');
         if (window.bambu && window.bambu.invoke) {
           try { await window.bambu.invoke('ai:disable'); } catch (_) { /* noop */ }
         }
         log('AI 控制服务已关闭。', 'info');
       }
+    };
+
+    toggle.addEventListener('click', async () => {
+      await setAIPanelOpen(panel.classList.contains('hidden'));
     });
 
-    closeBtn && closeBtn.addEventListener('click', () => {
-      toggle.checked = false;
-      toggle.dispatchEvent(new Event('change'));
-    });
+    closeBtn && closeBtn.addEventListener('click', () => setAIPanelOpen(false));
 
     runBtn && runBtn.addEventListener('click', () => this.aiRun(input.value, log));
     input && input.addEventListener('keydown', (e) => {
