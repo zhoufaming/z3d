@@ -474,15 +474,16 @@ html, body {
 .ai-toggle:hover { color: var(--text); }
 
 .ai-panel {
-  position: fixed; right: 18px; bottom: 18px; width: 320px; max-height: 80vh; z-index: 60;
-  display: flex; flex-direction: column; gap: 8px;
-  background: var(--bg-elev); border: 1px solid var(--accent-line); border-radius: 12px;
-  box-shadow: 0 12px 40px rgba(0,0,0,.6); padding: 12px; overflow: hidden;
+  position: fixed; top: 0; right: 0; bottom: 0; width: 440px; max-width: 42vw; z-index: 60;
+  display: flex; flex-direction: column; gap: 10px;
+  background: var(--bg-elev); border-left: 1px solid var(--accent-line);
+  box-shadow: -16px 0 44px rgba(0,0,0,.5); padding: 14px; overflow: hidden;
 }
 .ai-panel.hidden { display: none; }
 .ai-head {
   display: flex; align-items: center; justify-content: space-between;
-  font-size: 13.5px; font-weight: 600; color: var(--text);
+  font-size: 14px; font-weight: 600; color: var(--text);
+  padding-bottom: 8px; border-bottom: 1px solid var(--line-soft);
 }
 .ai-x {
   background: transparent; border: 0; color: var(--text-dim); cursor: pointer;
@@ -502,7 +503,7 @@ html, body {
 }
 .ai-hint { font-size: 11.5px; color: var(--text-faint); line-height: 1.5; }
 .ai-input {
-  width: 100%; height: 64px; resize: vertical; box-sizing: border-box;
+  width: 100%; height: 76px; resize: none; box-sizing: border-box;
   background: var(--bg-panel); border: 1px solid var(--line); border-radius: 8px;
   color: var(--text); font-size: 12.5px; padding: 8px 10px; line-height: 1.5;
   font-family: ui-monospace, Consolas, monospace;
@@ -552,9 +553,9 @@ html, body {
 
 /* 对话区（聊天气泡） */
 .ai-chat {
-  flex: 1 1 auto; min-height: 90px; max-height: 42vh; overflow-y: auto;
+  flex: 1 1 auto; min-height: 140px; overflow-y: auto;
   display: flex; flex-direction: column; gap: 6px;
-  padding: 4px 2px; font-size: 12px; line-height: 1.5;
+  padding: 4px 2px; font-size: 12.5px; line-height: 1.55;
 }
 .ai-msg {
   max-width: 92%; padding: 6px 10px; border-radius: 10px; white-space: pre-wrap; word-break: break-word;
