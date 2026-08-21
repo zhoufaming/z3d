@@ -474,7 +474,7 @@ html, body {
 .ai-toggle:hover { color: var(--text); }
 
 .ai-panel {
-  position: fixed; right: 18px; bottom: 18px; width: 360px; max-height: 76vh; z-index: 60;
+  position: fixed; right: 18px; bottom: 18px; width: 320px; max-height: 80vh; z-index: 60;
   display: flex; flex-direction: column; gap: 8px;
   background: var(--bg-elev); border: 1px solid var(--accent-line); border-radius: 12px;
   box-shadow: 0 12px 40px rgba(0,0,0,.6); padding: 12px; overflow: hidden;
@@ -516,15 +516,6 @@ html, body {
 .ai-samples button:hover { border-color: var(--accent); color: var(--text); }
 .ai-actions { display: flex; gap: 8px; align-items: center; }
 .ai-actions .btn { height: 30px; }
-.ai-log {
-  flex: 1; min-height: 80px; max-height: 30vh; overflow-y: auto;
-  background: #0d0f12; border: 1px solid var(--line-soft); border-radius: 8px;
-  padding: 8px; font-family: ui-monospace, Consolas, monospace; font-size: 11px; line-height: 1.55;
-}
-.ai-log-line { white-space: pre-wrap; word-break: break-word; }
-.ai-log-line.ai-ok { color: #6ee7a0; }
-.ai-log-line.ai-err { color: #ff8086; }
-.ai-log-line.ai-info { color: var(--text-dim); }
 
 /* 模式切换 */
 .ai-mode-row {
@@ -559,13 +550,28 @@ html, body {
 .ai-llm-row .btn { height: 26px; font-size: 11px; padding: 0 10px; }
 .ai-llm-hint { font-size: 10.5px; color: var(--text-faint); line-height: 1.4; }
 
-/* 大模型思考流（流式输出） */
-.ai-think {
-  max-height: 120px; overflow-y: auto;
-  background: #0d0f12; border: 1px solid var(--accent-line); border-radius: 8px;
-  padding: 7px 9px; font-size: 11px; line-height: 1.55; color: var(--text-dim);
-  font-family: ui-monospace, Consolas, monospace; white-space: pre-wrap; word-break: break-word;
+/* 对话区（聊天气泡） */
+.ai-chat {
+  flex: 1 1 auto; min-height: 90px; max-height: 42vh; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 4px 2px; font-size: 12px; line-height: 1.5;
 }
+.ai-msg {
+  max-width: 92%; padding: 6px 10px; border-radius: 10px; white-space: pre-wrap; word-break: break-word;
+  font-family: ui-monospace, Consolas, monospace;
+}
+.ai-msg-user { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 3px; }
+.ai-msg-ai { align-self: flex-start; background: var(--bg-panel); border: 1px solid var(--accent-line); color: var(--text); border-bottom-left-radius: 3px; }
+.ai-msg-ok { align-self: flex-start; background: rgba(36, 160, 92, .16); border: 1px solid rgba(36, 160, 92, .4); color: #6ee7a0; border-bottom-left-radius: 3px; }
+.ai-msg-err { align-self: flex-start; background: rgba(220, 60, 70, .14); border: 1px solid rgba(220, 60, 70, .4); color: #ff8086; border-bottom-left-radius: 3px; }
+.ai-msg-info { align-self: flex-start; background: var(--bg-panel); border: 1px solid var(--line-soft); color: var(--text-dim); border-bottom-left-radius: 3px; }
+
+/* 设置折叠区（模式/配置/服务信息） */
+.ai-settings {
+  display: flex; flex-direction: column; gap: 8px;
+  background: var(--bg-panel); border: 1px solid var(--line-soft); border-radius: 8px; padding: 8px;
+}
+.ai-settings.hidden { display: none; }
 
 /* 重型运算「处理中」遮罩 */
 #busy-overlay {

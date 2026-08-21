@@ -658,15 +658,15 @@ class App {
     const tokenEl = document.getElementById('ai-token');
     const input = document.getElementById('ai-input');
     const runBtn = document.getElementById('ai-run');
-    const logEl = document.getElementById('ai-log');
-    const clearBtn = document.getElementById('ai-clear');
+    const chatEl = document.getElementById('ai-chat');
     const samples = document.getElementById('ai-samples');
     const panel = document.getElementById('ai-panel');
     const closeBtn = document.getElementById('ai-close');
+    const settingsBtn = document.getElementById('ai-settings-btn');
+    const settings = document.getElementById('ai-settings');
 
     // 大模型模式相关元素
     const modeRadios = panel.querySelectorAll('input[name="ai-mode"]');
-    const cfgBtn = document.getElementById('ai-llm-cfg-btn');
     const cfgBox = document.getElementById('ai-llm-cfg');
     const cfgUrl = document.getElementById('ai-llm-url');
     const cfgKey = document.getElementById('ai-llm-key');
@@ -674,17 +674,40 @@ class App {
     const cfgTemp = document.getElementById('ai-llm-temp');
     const cfgSave = document.getElementById('ai-llm-save');
     const cfgTest = document.getElementById('ai-llm-test');
-    const thinkEl = document.getElementById('ai-think');
 
-    const log = (line, kind = 'info') => {
-      const ts = new Date().toLocaleTimeString();
+    // 本地日志文件：所有日志都落盘到 userData/ai-YYYY-MM-DD.log（面板不展示）
+    const writeLogToFile = (line, kind = 'info') => {
+      if (window.bambu && window.bambu.invoke) {
+        try {
+          const ts = new Date().toLocaleTimeString();
+          window.bambu.invoke('log:append', `[${ts}] [${kind}] ${line}`);
+        } catch (_) { /* 忽略 */ }
+      }
+    };
+    // 内部细节日志：只写文件，不在聊天窗口展示（避免刷屏）
+    const SKIP_IN_CHAT = /调用大模型|大模型返回|解析命令计划|解析到\s*\d+\s*条|开始执行|测试连接中|控制服务已启动|控制服务已关闭|模式切换|配置已保存到|未配置大模型|无主进程通道|未配置 API|启动控制服务失败|当前为大模型模式/;
+    const appendChat = (text, kind = 'info') => {
+      if (!chatEl) return;
       const div = document.createElement('div');
-      div.className = `ai-log-line ai-${kind}`;
-      div.textContent = `[${ts}] ${line}`;
-      logEl.appendChild(div);
-      logEl.scrollTop = logEl.scrollHeight;
+      div.className = `ai-msg ai-msg-${kind}`;
+      div.textContent = text;
+      chatEl.appendChild(div);
+      chatEl.scrollTop = chatEl.scrollHeight;
+    };
+    const userBubble = (text) => {
+      appendChat(text, 'user');
+      writeLogToFile(`指令: ${text}`, 'user');
+    };
+    const log = (line, kind = 'info') => {
+      writeLogToFile(line, kind);
+      if (SKIP_IN_CHAT.test(line)) return;
+      appendChat(line, kind);
     };
     this._aiLog = log;
+    this._aiChat = () => chatEl;
+    this._aiUserBubble = userBubble;
+    this._aiAppendChat = appendChat;
+    this._aiWriteLog = writeLogToFile;
 
     // ---- 加载并应用大模型配置（异步，走 SQLite） ----
     const llmConfig = await loadLLMConfig();
@@ -696,8 +719,8 @@ class App {
       cfgTemp.value = llmConfig.temperature ?? 0.2;
       // 同步模式 radio
       modeRadios.forEach((r) => { r.checked = (r.value === llmConfig.mode); });
-      // 大模型模式下显示配置按钮
-      cfgBtn.classList.toggle('hidden', llmConfig.mode !== 'llm');
+      // 大模型模式自动展开配置区；本地模式隐藏
+      cfgBox.classList.toggle('hidden', llmConfig.mode !== 'llm');
     };
     applyConfigToUI();
 
@@ -707,7 +730,7 @@ class App {
         if (!r.checked) return;
         llmConfig.mode = r.value;
         saveLLMConfig(llmConfig);
-        cfgBtn.classList.toggle('hidden', r.value !== 'llm');
+        cfgBox.classList.toggle('hidden', r.value !== 'llm');
         if (r.value === 'llm' && !llmConfig.apiUrl) {
           cfgBox.classList.remove('hidden');
           log('未配置大模型 API，请先填写配置', 'info');
@@ -716,9 +739,6 @@ class App {
         log(`模式切换：${r.value === 'llm' ? '大模型' : '本地解析'}`, 'info');
       });
     });
-
-    // ---- 配置区显示/隐藏 ----
-    cfgBtn && cfgBtn.addEventListener('click', () => cfgBox.classList.toggle('hidden'));
 
     // ---- 保存配置（异步，走 SQLite） ----
     cfgSave && cfgSave.addEventListener('click', async () => {
@@ -742,13 +762,11 @@ class App {
       };
       if (!testCfg.apiUrl) { log('请先填写 API URL', 'err'); return; }
       log('测试连接中…', 'info');
-      thinkEl.classList.remove('hidden');
-      thinkEl.textContent = '';
       try {
         const full = await callLLM(testCfg, [
           { role: 'system', content: '你是测试助手。只回复一个字：ok' },
           { role: 'user', content: 'ping' },
-        ], { onToken: (t) => { thinkEl.textContent += t; thinkEl.scrollTop = thinkEl.scrollHeight; } });
+        ], { onToken: () => {} });
         log(`连接成功，模型返回：${(full || '').slice(0, 60)}`, 'ok');
       } catch (err) {
         log(`连接失败：${err && err.message}`, 'err');
@@ -758,9 +776,12 @@ class App {
     // 示例指令点击即填入输入框
     if (samples) {
       samples.querySelectorAll('[data-sample]').forEach((b) => {
-        b.addEventListener('click', () => { input.value = b.dataset.sample; });
+        b.addEventListener('click', () => { input.value = b.dataset.sample; input.focus(); });
       });
     }
+
+    // 设置（模式/配置/服务信息）折叠
+    settingsBtn && settingsBtn.addEventListener('click', () => settings.classList.toggle('hidden'));
 
     toggle.addEventListener('change', async () => {
       if (toggle.checked) {
@@ -804,8 +825,6 @@ class App {
       toggle.dispatchEvent(new Event('change'));
     });
 
-    clearBtn && clearBtn.addEventListener('click', () => { logEl.innerHTML = ''; });
-
     runBtn && runBtn.addEventListener('click', () => this.aiRun(input.value, log));
     input && input.addEventListener('keydown', (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') this.aiRun(input.value, log);
@@ -816,7 +835,8 @@ class App {
   async aiRun(text, log) {
     text = (text || '').trim();
     if (!text) return;
-    log(`指令: ${text}`);
+    if (this._aiUserBubble) this._aiUserBubble(text);
+    else if (log) log(`指令: ${text}`);
 
     // JSON 命令 / 命令计划：直接执行（所有模式通用）
     if (text.startsWith('{') || text.startsWith('[')) {
@@ -849,12 +869,15 @@ class App {
   async _aiRunLLM(text, log) {
     const cfg = this.llmConfig;
     if (!cfg.apiUrl) {
-      log('未配置大模型 API URL，请点「配置…」填写', 'err');
+      log('未配置大模型 API URL，请点「设置」填写', 'err');
       return;
     }
-    const thinkEl = document.getElementById('ai-think');
-    thinkEl.classList.remove('hidden');
-    thinkEl.textContent = '';
+    // 在对话区新建一个 AI 气泡，用于流式显示大模型原始回复
+    const chatEl = this._aiChat ? this._aiChat() : document.getElementById('ai-chat');
+    const bubble = document.createElement('div');
+    bubble.className = 'ai-msg ai-msg-ai';
+    bubble.textContent = '…';
+    if (chatEl) { chatEl.appendChild(bubble); chatEl.scrollTop = chatEl.scrollHeight; }
     log(`调用大模型 ${cfg.model || ''}…`, 'info');
 
     const scene = await this.bridge.run({ cmd: 'scene' }).then((r) => r.result);
@@ -864,11 +887,11 @@ class App {
     try {
       full = await callLLM(cfg, messages, {
         onToken: (t) => {
-          thinkEl.textContent += t;
-          thinkEl.scrollTop = thinkEl.scrollHeight;
+          if (bubble) { bubble.textContent += t; if (chatEl) chatEl.scrollTop = chatEl.scrollHeight; }
         },
       });
     } catch (err) {
+      if (bubble) bubble.textContent = `调用失败：${err && err.message}`;
       log(`大模型调用失败：${err && err.message}`, 'err');
       return;
     }

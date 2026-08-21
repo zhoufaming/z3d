@@ -214,6 +214,19 @@ ipcMain.handle('cfg:set', (e, key, value) => {
   return { ok: true };
 });
 
+// 本地日志：渲染进程把 AI 面板日志按日期追加到 userData/ai-YYYY-MM-DD.log，
+// 面板不再展示这些调试日志，只落到文件便于排查。
+function logFilePath() {
+  const userData = app.getPath('userData');
+  const d = new Date();
+  const name = `ai-${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}.log`;
+  return path.join(userData, name);
+}
+ipcMain.handle('log:append', (e, line) => {
+  try { fs.appendFileSync(logFilePath(), line + '\n'); } catch (_) { /* 忽略写失败 */ }
+  return { ok: true };
+});
+
 // 出于安全考虑，文件读写仅限模型文件（.3mf/.stl）：这两个 handle 启动即注册，
 // 若不限制扩展名，渲染进程被攻破或 token 泄漏时主进程会成为任意文件读写原语。
 const MODEL_FILE_RE = /\.(3mf|stl)$/i;
