@@ -16,6 +16,15 @@ export class Archive {
 
   static async fromBlob(blob) {
     const buf = new Uint8Array(await blob.arrayBuffer());
+    return Archive.fromArrayBuffer(buf);
+  }
+
+  /**
+   * 直接从已读入内存的字节解压。Worker 与主线程共用，避免重复实现解压逻辑。
+   * @param {Uint8Array|ArrayBuffer} buf
+   */
+  static async fromArrayBuffer(buf) {
+    if (buf instanceof ArrayBuffer) buf = new Uint8Array(buf);
     const files = await new Promise((resolve, reject) => {
       unzip(buf, (err, data) => (err ? reject(err) : resolve(data)));
     });

@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { Viewer, disposeTree } from './viewer/viewer.js';
 import { Project, PRINTER_PRESETS, SceneObject, ScenePart } from './core/project.js';
 import { History, cloneSceneObject } from './core/history.js';
-import { readThreeMF } from './core/threemf/reader.js';
+import { parseThreeMF } from './core/threemf/parse-client.js';
 import { writeThreeMF } from './core/threemf/writer.js';
 import { PRIMITIVES, createPrimitiveGeometry, primitiveName } from './core/primitives.js';
 import { splitShells, cutObject, gridLayout, createBase } from './core/split.js';
@@ -935,10 +935,20 @@ class App {
 
     let ok = 0;
     const t0 = performance.now();
-    for (const file of files) {
+    let tParse = 0; // 解压 + 解析 XML（已在 Worker 异步完成，主线程不再冻结）
+    let tGeo = 0; // 建 Three.js 几何（importDoc）
+    for (let fi = 0; fi < files.length; fi++) {
+      const file = files[fi];
       try {
-        const doc = await readThreeMF(file);
+        setStatus(`正在解析 ${fi + 1}/${files.length}：${file.name}…`, 'busy');
+        const tp = performance.now();
+        // parseThreeMF 走 Web Worker：解压 + XML 解析在后台线程完成，
+        // 主线程全程可响应交互，不再卡死 UI。
+        const doc = await parseThreeMF(file);
+        tParse += performance.now() - tp;
+        const tg = performance.now();
         const created = this.project.importDoc(doc);
+        tGeo += performance.now() - tg;
         if (append || ok > 0) this.avoidOverlap(created);
         ok++;
       } catch (err) {
@@ -956,6 +966,7 @@ class App {
     }
 
     // 场景内容变了，重建渲染树
+    const tAfterImport = performance.now();
     this.viewer.modelRoot.clear();
     for (const o of this.project.objects) this.viewer.modelRoot.add(o.group);
 
@@ -980,9 +991,13 @@ class App {
     this.updateHistoryButtons();
 
     const ms = Math.round(performance.now() - t0);
+    const tRender = Math.round(performance.now() - tAfterImport);
     const bytes = files.reduce((n, f) => n + f.size, 0);
     setStatus(`已载入 ${ok} 个文件`, '');
-    toast(`载入完成：${ok} 个文件 · ${humanBytes(bytes)} · ${ms}ms`, 'ok');
+    toast(
+      `载入完成：${ok} 个文件 · ${humanBytes(bytes)} · 总 ${ms}ms（解析 ${Math.round(tParse)} / 几何 ${Math.round(tGeo)} / 刷新 ${tRender}）`,
+      'ok',
+    );
   }
 
   /**

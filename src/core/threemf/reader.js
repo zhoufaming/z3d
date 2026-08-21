@@ -38,7 +38,18 @@ function normalizePath(p) {
 }
 
 export async function readThreeMF(file) {
-  const archive = await Archive.fromBlob(file);
+  const buf = new Uint8Array(await file.arrayBuffer());
+  return parseArchiveBytes(buf, { name: file.name, size: file.size });
+}
+
+/**
+ * 解压后的核心解析逻辑：从 Archive 字节构建完整 doc。
+ * 主线程（readThreeMF）与 Web Worker（parse-worker.js）共用，避免逻辑分叉。
+ * @param {Uint8Array} buf 整个 3mf 容器的字节
+ * @param {{name?:string, size?:number}} meta 文件元信息
+ */
+export async function parseArchiveBytes(buf, meta = {}) {
+  const archive = await Archive.fromArrayBuffer(buf);
   const modelPath = findPrimaryModelPath(archive);
   const rootXml = archive.text(modelPath);
   if (!rootXml) {
@@ -84,8 +95,8 @@ export async function readThreeMF(file) {
   const projectInfo = readProjectSettings(projectJson);
 
   return {
-    name: file.name || 'untitled.3mf',
-    size: file.size || 0,
+    name: meta.name || 'untitled.3mf',
+    size: meta.size || 0,
     archive,
     modelPath,
     root,
